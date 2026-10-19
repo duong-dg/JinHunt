@@ -43,5 +43,14 @@ $('#review-consent').onclick=()=>{$('#profile-dialog').close();openConsentDialog
 $('#withdraw-consent').onclick=()=>{$('#profile-dialog').close();$('#withdraw-dialog').showModal();};
 $('#withdraw-form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget;busy(form,async()=>{const result=await api('/me/withdraw-consent',{method:'POST'});token='';user=null;sessionStorage.removeItem('jinhunt-token');$('#withdraw-dialog').close();renderUser();loadFeed();toast(result.message);});};
 document.body.insertAdjacentHTML('beforeend','<nav class="legal-footer" aria-label="Điều khoản và quyền riêng tư"><a href="/terms" target="_blank" rel="noopener noreferrer">Điều khoản</a><a href="/privacy" target="_blank" rel="noopener noreferrer">Quyền riêng tư</a><a href="/copyright" target="_blank" rel="noopener noreferrer">Bản quyền & đăng ảnh</a><a href="/support" target="_blank" rel="noopener noreferrer">Yêu cầu hỗ trợ</a></nav>');
+const policyLayout=window.matchMedia('(min-width:701px)');
+function placePolicies(){
+  const parent=policyLayout.matches?$('.sidebar-bottom'):document.body;
+  parent.append($('.legal-footer'));
+  const hint=$('.legal-draft-hint');
+  if(hint)parent.append(hint);
+}
+policyLayout.addEventListener('change',placePolicies);
+placePolicies();
 api('/legal').then(config=>{currentLegalVersion=config.version;if(config.draft){const hint=document.createElement('p');hint.className='legal-draft-hint';hint.textContent='Chính sách đang ở bản dự thảo; thông tin đơn vị vận hành đang được hoàn thiện.';$('.legal-footer').after(hint);}}).catch(()=>{});
 if (user?.needs_legal_consent) openConsentDialog();
