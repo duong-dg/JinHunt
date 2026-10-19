@@ -1,0 +1,34 @@
+/* Fresh ocean palette: blue, cyan and cool white. */
+:root{--paper:#f7fbff;--green:#163f70;--muted:#667e98;--line:#dfeaf5;--blue:#1769d5;--cyan:#28bfd4}
+body{background:var(--paper);color:var(--green)}
+.brand{color:#1769d5}.brand small{color:#7b97b6}
+.sidebar-label,.feed-heading>.eyebrow{color:#7894b1}
+.sidebar nav button{color:#63809e}.sidebar nav button:hover{background:#f0f7ff}
+.sidebar nav button.active{background:#e7f1ff;color:#1769d5}
+.sidebar nav #create,.primary{background:#1769d5;color:white}
+.sidebar nav #create:hover,.primary:hover{background:#1157b5}
+.sidebar-bottom .compass svg{color:#28adc5}.sidebar-bottom small{color:#829bb4}
+.feed-heading>p:last-child,.feed-note,.post-description{color:#6884a0}
+.live-tag{color:#3985ab}.live-tag i{background:#22b7cf}
+.avatar{background:#e8f3ff;color:#2679c5;border-color:#f3f8ff}
+.composer>button:first-of-type{color:#7992ab}.icon-button{background:#e8f6fc;color:#168cae}
+.journey-user .avatar{background:#deefff;color:#1769d5}
+.post-header>div>span,.post-actions .solved-count,.private-note{color:#738ca6}
+.post-reward{background:#e5f5ff;color:#1b7ca8}
+.guess-button{color:#1769d5!important}.discussion-button{color:#6888a7!important}
+.post-photo,.detail-image{background:#edf5fd}
+.private-note{border-top-color:#eaf1f8}.xp-track{background:#e2edf8}
+.xp-track span{background:linear-gradient(90deg,#1769d5,#28bfd4)}
+.hunter-rank,.hunter>div>span,.journey-user p{color:#7d96ae}
+.how-to{background:linear-gradient(145deg,#eaf4ff,#e9faff);border-color:#d6eafa}
+.how-to>span svg{color:#1e9bc4}.how-to .eyebrow{color:#4c8daf}
+.how-to>p:last-of-type{color:#6086a5}.how-tags span{border-color:#c9e2f3;color:#37799e;background:#ffffff70}
+.journey .text-button{color:#1769d5}.rail-heading button{color:#4289bb}
+.footnote,footer{color:#8199af}.empty{background:#fff;border-color:#c5dcef}
+.empty-icon{color:#3ca7d5}.empty p:not(.eyebrow){color:#6b87a1}
+.outline{border-color:#c4d9ee;color:#1769d5}.text-button{color:#1769d5}
+input,textarea{border-color:#cadff1;color:#163f70}input:focus,textarea:focus{outline-color:#7db9ef}
+button:focus-visible,a:focus-visible{outline-color:#489cea}
+#toast{background:#164f91}.hidden-comment{color:#718ba5}
+.leader span:first-child{color:#328bd0}.badge{background:#e6f3ff;color:#227ab6}
+@media(max-width:520px){.sidebar nav #create{background:none;color:#1769d5}.mobile-brand>span{color:#7d96ae}}
