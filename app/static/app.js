@@ -1,6 +1,10 @@
 const $ = s => document.querySelector(s);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let token = sessionStorage.getItem('jinhunt-token') || '', user = null, registerMode = false, page = 'explore', toastTimer;
+let feedOffset = 0;
+const iconPaths = {home:'M3 10 12 3l9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z',award:'m12 3 3 6 6 1-4.5 4.5 1 6.5-5.5-3-5.5 3 1-6.5L3 10l6-1Z',plus:'M12 5v14M5 12h14',user:'M20 21v-2a7 7 0 0 0-14 0v2M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0',camera:'M3 7h4l2-3h6l2 3h4v13H3ZM16 13a4 4 0 1 1-8 0 4 4 0 0 1 8 0',compass:'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0ZM16 8l-3 5-5 3 3-5Z',chat:'M21 11a9 9 0 0 1-9 9H4l-3 2 2-6a9 9 0 1 1 18-5Z',pin:'M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0ZM15 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0'};
+function icon(name) { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${iconPaths[name] || iconPaths.compass}"/></svg>`; }
+document.querySelectorAll('[data-icon]').forEach(element => element.innerHTML = icon(element.dataset.icon));
 const contacts = document.createElement('div');
 contacts.id = 'register-contacts'; contacts.hidden = true;
 contacts.innerHTML = '<label>Tên hiển thị<input name="display_name" maxlength="80" autocomplete="nickname"></label><label>Email<input name="email" type="email" maxlength="254" autocomplete="email"></label><label>Số điện thoại<input name="phone" type="tel" maxlength="40" autocomplete="tel" placeholder="0901234567 hoặc +84901234567"></label><p class="muted">Cần email hoặc số điện thoại. Hiện chưa xác minh bằng email/OTP.</p>';
@@ -18,24 +22,43 @@ async function api(path, options = {}) {
   if (!response.ok) { if (response.status === 401) { token = ''; user = null; sessionStorage.removeItem('jinhunt-token'); renderUser(); } throw new Error(typeof data.detail === 'string' ? data.detail : 'Dữ liệu chưa hợp lệ. Vui lòng kiểm tra các ô nhập.'); }
   return data;
 }
-function renderUser() { $('#account').textContent = user ? `${user.display_name || user.username} · Hồ sơ` : 'Đăng nhập'; $('#profile').textContent = user ? `Level ${user.level} · ${user.xp} XP · ${200 - user.xp % 200} XP tới level tiếp theo` : 'Khám phá theo cách của bạn ↗'; }
+function renderUser() {
+  const name = user ? user.display_name || user.username : 'Nhà khám phá mới';
+  $('#account-label').textContent = user ? 'Hồ sơ của tôi' : 'Đăng nhập';
+  $('#journey-name').textContent = name;
+  $('#journey-handle').textContent = user ? `@${user.username}` : 'Một góc nhìn mới đang chờ bạn';
+  $('#profile').textContent = user ? `Level ${user.level} · ${user.xp} XP · Còn ${200 - user.xp % 200} XP lên cấp` : 'Đăng nhập để bắt đầu tích lũy XP';
+  $('#xp-fill').style.width = `${user ? user.xp % 200 / 2 : 0}%`;
+  $('.xp-track').setAttribute('aria-valuenow', user ? user.xp % 200 : 0);
+  $('#journey-action').textContent = user ? 'Chỉnh sửa hồ sơ ↗' : 'Bắt đầu hành trình ↗';
+  document.querySelectorAll('.self-avatar').forEach(element => element.textContent = user ? Array.from(name)[0].toUpperCase() : 'J');
+}
 async function refreshUser() { if (token) { try { user = await api('/me'); } catch {} } renderUser(); }
 function requireLogin() { if (user) return true; $('#auth-dialog').showModal(); return false; }
 async function busy(form, task) { const button = form.querySelector('[type="submit"]'); button.disabled = true; try { await task(); } catch (error) { toast(error.message); } finally { button.disabled = false; } }
-async function loadFeed() {
+async function loadFeed(append = false) {
+  if (!append) feedOffset = 0;
+  $('#load-more').hidden = true;
   $('#explore').classList.toggle('active', page === 'explore'); $('#ranking').classList.toggle('active', page === 'ranking');
-  $('#section-title').textContent = page === 'explore' ? 'Những nơi chờ bạn tìm ra' : 'Những nhà khám phá hàng đầu';
-  $('#feed').innerHTML = '<div class="empty">Đang tải hành trình…</div>';
+  for (const [id, active] of [['explore', page === 'explore'], ['ranking', page === 'ranking']]) { if (active) $('#' + id).setAttribute('aria-current','page'); else $('#' + id).removeAttribute('aria-current'); }
+  $('#section-title').textContent = page === 'explore' ? 'Đi tìm nơi chốn.' : 'Dấu chân khám phá.';
+  $('#feed-label').textContent = page === 'explore' ? 'Mới nhất từ cộng đồng' : 'Bảng xếp hạng · Tổng XP';
+  $('.composer').hidden = page !== 'explore';
+  if (!append) $('#feed').innerHTML = '<div class="empty">Đang tải hành trình…</div>';
   try {
-    if (page === 'ranking') { const rows = await api('/leaderboard'); $('#feed').innerHTML = rows.length ? rows.map((u,i) => `<div class="leader"><span>${String(i+1).padStart(2,'0')}</span><strong>${esc(u.username)}</strong><span class="score">Level ${u.level} · ${u.xp} XP</span></div>`).join('') : '<div class="empty">Bảng xếp hạng đang chờ nhà khám phá đầu tiên.</div>'; return; }
-    const rows = await api('/cases');
-    $('#feed').innerHTML = rows.length ? rows.map(c => `<button class="card" data-case="${c.id}"><img src="${esc(c.image_url)}" alt="Ảnh thử thách ${esc(c.title)}" loading="lazy"><div class="card-body"><span class="badge">ĐỊA ĐIỂM BÍ ẨN · +${c.reward_xp} XP</span><h3>${esc(c.title)}</h3><p>${esc(c.description.slice(0,100)) || 'Bạn nhận ra địa điểm này chứ?'}</p><div class="card-meta"><span>↗ ${esc(c.creator)}</span><span>${c.solves} người giải được</span></div></div></button>`).join('') : '<div class="empty"><p class="eyebrow">TẤM ẢNH ĐẦU TIÊN. HÀNH TRÌNH ĐẦU TIÊN.</p><h3>Một địa điểm thú vị đang chờ bạn chia sẻ</h3><p>Chụp một góc quen, đặt đáp án bí mật<br>và để cộng đồng tìm ra câu chuyện phía sau.</p><button class="primary" id="empty-create">＋ Tạo thử thách đầu tiên</button></div>';
-    document.querySelectorAll('[data-case]').forEach(b => b.onclick = () => openCase(Number(b.dataset.case)));
+    if (page === 'ranking') { const rows = await api('/leaderboard'); $('#feed').innerHTML = rows.length ? rows.map((u,i) => `<div class="leader"><span>${String(i+1).padStart(2,'0')}</span><strong>${esc(u.display_name || u.username)}</strong><span class="score">Level ${u.level} · ${u.xp} XP</span></div>`).join('') : '<div class="empty">Bảng xếp hạng đang chờ nhà khám phá đầu tiên.</div>'; return; }
+    const rows = await api(`/cases?offset=${feedOffset}&limit=12`);
+    const markup = rows.map(c => `<article class="post"><div class="post-header"><span class="avatar">${esc(Array.from(c.creator)[0].toUpperCase())}</span><div><strong>${esc(c.creator)}</strong><span>Đã chia sẻ một địa điểm bí ẩn</span></div><span class="post-reward">+${c.reward_xp} XP</span></div><button class="post-photo" data-case="${c.id}" aria-label="Xem thử thách ${esc(c.title)}"><img src="${esc(c.image_url)}" alt="Ảnh thử thách ${esc(c.title)}" loading="lazy"></button><div class="post-body"><div class="post-actions"><button class="guess-button" data-case="${c.id}">${icon('pin')}<span>Đoán địa điểm</span></button><button class="discussion-button" data-case="${c.id}" data-discussion="true">${icon('chat')}<span>Trao đổi</span></button><span class="solved-count">${c.solves} người giải được</span></div><h2>${esc(c.title)}</h2>${c.description ? `<p class="post-description">${esc(c.description)}</p>` : '<p class="post-description muted">Nhìn kỹ bức ảnh, bạn nhận ra nơi này chứ?</p>'}<p class="private-note">${icon('compass')} Đáp án của bạn được giữ riêng tư.</p></div></article>`).join('');
+    if (append) $('#feed').insertAdjacentHTML('beforeend', markup); else $('#feed').innerHTML = markup || '<div class="empty"><span class="empty-icon">◈</span><p class="eyebrow">MỖI TẤM ẢNH, MỘT HÀNH TRÌNH</p><h3>Chia sẻ góc nhìn đầu tiên</h3><p>Một con hẻm quen, một quán nhỏ ven đường…<br>Đăng ảnh và để mọi người tìm ra nơi bạn đã đến.</p><button class="primary" id="empty-create">＋ Tạo thử thách đầu tiên</button></div>';
+    feedOffset += rows.length;
+    $('#load-more').hidden = rows.length < 12;
+    document.querySelectorAll('[data-case]').forEach(b => b.onclick = () => openCase(Number(b.dataset.case), Boolean(b.dataset.discussion)));
     if ($('#empty-create')) $('#empty-create').onclick = () => $('#create').click();
-  } catch (error) { $('#feed').innerHTML = '<div class="empty">Không tải được dữ liệu. <button id="retry">Thử lại</button></div>'; $('#retry').onclick = loadFeed; toast(error.message); }
+  } catch (error) { if (!append) { $('#feed').innerHTML = '<div class="empty">Không tải được dữ liệu. <button id="retry">Thử lại</button></div>'; $('#retry').onclick = () => loadFeed(); } else $('#load-more').hidden = false; toast(error.message); }
 }
+async function loadHunters() { try { const rows = (await api('/leaderboard')).slice(0, 4); $('#top-hunters').innerHTML = rows.length ? rows.map((u,i) => `<div class="hunter"><span class="hunter-rank">${i+1}</span><span class="avatar">${esc(Array.from(u.display_name || u.username)[0].toUpperCase())}</span><div><strong>${esc(u.display_name || u.username)}</strong><span>Level ${u.level} · ${u.xp} XP</span></div></div>`).join('') : '<p class="muted">Cộng đồng đang chờ nhà khám phá đầu tiên. Có thể là bạn!</p>'; } catch { $('#top-hunters').innerHTML = '<p class="muted">Chưa tải được bảng xếp hạng.</p>'; } }
 async function loadComments(id) { const rows = await api(`/cases/${id}/comments`); $('#comments').innerHTML = rows.length ? rows.map(c => `<div class="comment ${c.is_hidden ? 'hidden-comment' : ''}"><strong>${esc(c.username)}</strong><p>${esc(c.content)}</p></div>`).join('') : '<p class="muted">Chưa có trao đổi. Hãy bắt đầu với một gợi ý!</p>'; }
-async function openCase(id) {
+async function openCase(id, discussion = false) {
   try {
     const c = await api(`/cases/${id}`);
     $('#detail').innerHTML = `<p class="eyebrow">THỬ THÁCH #${c.id} · +${c.reward_xp} XP</p><h2>${esc(c.title)}</h2><p class="muted">Chia sẻ bởi ${esc(c.creator)} · ${c.solves} người đoán đúng</p><img class="detail-image" src="${esc(c.image_url)}" alt="Ảnh địa điểm bí ẩn"><p>${esc(c.description)}</p><form id="guess-form"><label>Địa điểm này tên gì?<input name="answer" maxlength="200" placeholder="Nhập đáp án bí mật của bạn…"></label>${c.has_coordinates ? '<details><summary>Hoặc dự đoán bằng tọa độ</summary><div class="row"><label>Vĩ độ<input name="latitude" type="number" step="any" min="-90" max="90"></label><label>Kinh độ<input name="longitude" type="number" step="any" min="-180" max="180"></label></div></details>' : ''}<button class="primary" type="submit">Gửi dự đoán ↗</button><p id="guess-result" role="status" class="muted">Đáp án chỉ gửi riêng đến hệ thống.</p></form><hr><h3>Trao đổi & gợi ý</h3><div id="comments"></div><form id="comment-form"><label>Bình luận<textarea name="content" required maxlength="1000" placeholder="Chia sẻ suy nghĩ của bạn…"></textarea></label><button class="primary" type="submit">Gửi bình luận</button><p class="muted">Bình luận chứa tên đáp án sẽ tự động được che.</p></form>`;
@@ -43,12 +66,18 @@ async function openCase(id) {
     $('#guess-form').onsubmit = event => { event.preventDefault(); if (!user) { toast('Đăng nhập trước khi dự đoán.'); return; } const form = event.currentTarget; busy(form, async () => { const f = new FormData(form), body = {answer: f.get('answer')}; for (const key of ['latitude','longitude']) if (f.get(key) !== null && f.get(key) !== '') body[key] = Number(f.get(key)); if (!body.answer.trim() && !(body.latitude !== undefined && body.longitude !== undefined)) throw new Error('Nhập tên địa điểm hoặc đủ hai tọa độ.'); const result = await api(`/cases/${id}/guesses`, {method:'POST',body}); $('#guess-result').textContent = ({correct:`Chính xác! Bạn nhận +${result.reward_xp} XP.`, incorrect:'Chưa đúng rồi. Hãy xem kỹ ảnh và thử lại!', already_solved:'Bạn đã giải được thử thách này rồi.'})[result.status]; await refreshUser(); loadFeed(); }); };
     $('#comment-form').onsubmit = event => { event.preventDefault(); if (!user) { toast('Đăng nhập trước khi bình luận.'); return; } const form = event.currentTarget; busy(form, async () => { const result = await api(`/cases/${id}/comments`, {method:'POST',body:{content:new FormData(form).get('content')}}); form.reset(); await loadComments(id); if (result.is_hidden) toast('Bình luận có chứa đáp án nên đã được che.'); }); };
     await loadComments(id);
+    if (discussion) { $('#comment-form textarea').focus(); $('#comment-form').scrollIntoView({block:'nearest'}); }
   } catch (error) { toast(error.message); }
 }
 document.querySelectorAll('.close').forEach(button => button.onclick = () => button.closest('dialog').close());
 $('#explore').onclick = () => { page = 'explore'; loadFeed(); };
 $('#ranking').onclick = () => { page = 'ranking'; loadFeed(); };
 $('#create').onclick = () => { if (requireLogin()) $('#create-dialog').showModal(); };
+$('#compose-trigger').onclick = $('#compose-camera').onclick = () => $('#create').click();
+$('#journey-action').onclick = () => $('#account').click();
+$('#all-ranking').onclick = () => $('#ranking').click();
+$('#load-more').onclick = () => busyMore();
+async function busyMore() { $('#load-more').disabled = true; await loadFeed(true); $('#load-more').disabled = false; }
 $('#account').onclick = () => { if (!user) { $('#auth-dialog').showModal(); return; } for (const key of ['display_name','bio','email','phone']) $('#profile-form').elements[key].value = user[key] || ''; $('#profile-dialog').showModal(); };
 $('#logout').onclick = async () => { try { await api('/auth/logout', {method:'POST'}); token = ''; user = null; sessionStorage.removeItem('jinhunt-token'); renderUser(); $('#profile-dialog').close(); toast('Đã đăng xuất.'); } catch (error) { toast(error.message); } };
 $('#profile-form').onsubmit = event => { event.preventDefault(); const form = event.currentTarget; busy(form, async () => { const body = Object.fromEntries(new FormData(form)); if (!body.email.trim() && !body.phone.trim()) throw new Error('Cần giữ email hoặc số điện thoại.'); user = await api('/me',{method:'PATCH',body}); renderUser(); $('#profile-dialog').close(); toast('Đã cập nhật hồ sơ.'); if (page === 'ranking') loadFeed(); }); };
@@ -56,4 +85,4 @@ $('#auth-switch').onclick = () => { registerMode = !registerMode; $('#auth-title
 contacts.querySelectorAll('input').forEach(input => input.disabled = true);
 $('#auth-form').onsubmit = event => { event.preventDefault(); const form = event.currentTarget; busy(form, async () => { const body = Object.fromEntries(new FormData(form)); if (registerMode && !body.email.trim() && !body.phone.trim()) throw new Error('Nhập email hoặc số điện thoại để đăng ký.'); const result = await api(`/auth/${registerMode ? 'register' : 'login'}`,{method:'POST',body}); token = result.token; user = result.user; sessionStorage.setItem('jinhunt-token',token); renderUser(); form.reset(); $('#auth-dialog').close(); toast(`Xin chào ${user.display_name || user.username}!`); }); };
 $('#create-form').onsubmit = event => { event.preventDefault(); const form = event.currentTarget; busy(form, async () => { const f = new FormData(form), image = f.get('image'); if (image.size > 8 * 1024 * 1024) throw new Error('Ảnh tối đa 8 MB.'); if (Boolean(f.get('latitude')) !== Boolean(f.get('longitude'))) throw new Error('Cần nhập cả hai tọa độ.'); const upload = new FormData(); upload.append('file', image); const {image_url} = await api('/uploads',{method:'POST',body:upload}); const body = {title:f.get('title'),description:f.get('description'),answer:f.get('answer'),image_url}; for (const key of ['latitude','longitude']) if (f.get(key) !== '') body[key] = Number(f.get(key)); await api('/cases',{method:'POST',body}); $('#create-dialog').close(); form.reset(); page = 'explore'; await loadFeed(); toast('Thử thách đã sẵn sàng. Để mọi người khám phá nào!'); }); };
-refreshUser(); loadFeed();
+refreshUser(); loadFeed(); loadHunters();

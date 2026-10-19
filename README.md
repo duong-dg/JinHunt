@@ -2,6 +2,8 @@
 
 Ứng dụng đoán địa điểm qua ảnh. MVP gồm FastAPI và giao diện web responsive tiếng Việt, dùng chung API cho client iOS/Android tương lai.
 
+Trang chủ hiển thị feed ảnh lớn, thanh điều hướng bên trái và hồ sơ/XP/bảng xếp hạng ở bên phải trên desktop. Tablet thu gọn bố cục; điện thoại dùng thanh điều hướng dưới cùng. Mỗi bài có nút đoán địa điểm và mở phần trao đổi. Feed tải 12 bài mỗi lượt, có nút xem thêm. Chưa có tính năng theo dõi, thả tim hoặc nhắn tin.
+
 ## Chạy bằng Docker
 
 ```sh
