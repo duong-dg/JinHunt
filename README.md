@@ -1,0 +1,68 @@
+# JinHunt
+
+Ứng dụng đoán địa điểm qua ảnh. MVP gồm FastAPI và giao diện web responsive tiếng Việt, dùng chung API cho client iOS/Android tương lai.
+
+## Chạy bằng Docker
+
+```sh
+git clone https://github.com/duong-dg/JinHunt.git
+cd JinHunt
+cp .env.example .env
+# Đổi POSTGRES_PASSWORD trong .env thành chuỗi ngẫu nhiên chỉ gồm chữ và số.
+docker compose up -d --build
+```
+
+PowerShell: dùng `Copy-Item .env.example .env` thay cho `cp` nếu cần.
+
+Mở http://localhost:8000; tài liệu API: http://localhost:8000/docs.
+Docker Compose tạo PostgreSQL mới và lưu ảnh trong volume riêng. Database không mở cổng ra ngoài.
+
+## Chạy local không cần Docker
+
+Python 3.12 trở lên:
+
+```sh
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+Mặc định dùng SQLite (`jinhunt.db`), ảnh trong `uploads/`. Có thể đặt biến môi trường `DATABASE_URL` để chuyển PostgreSQL và `UPLOAD_DIR` để đổi thư mục ảnh.
+
+## Luồng chơi
+
+1. Đăng ký tài khoản (username không dấu 3–30 ký tự, mật khẩu ít nhất 8 ký tự).
+2. Tải ảnh, nhập tiêu đề, gợi ý và tên đáp án bí mật. Tọa độ là tùy chọn.
+3. Người khác đoán bằng tên (không phân biệt hoa/thường và dấu tiếng Việt) hoặc tọa độ trong bán kính 150 m mặc định.
+4. Đoán đúng nhận 50 XP một lần duy nhất. Người tạo không được tự giải. Mỗi 200 XP lên một level.
+5. Bình luận công khai; bình luận có chứa đầy đủ tên đáp án được che, kể cả trong API. Các biến thể/cách nói gián tiếp chưa được nhận diện.
+
+API không trả đáp án/tọa độ đích, kể cả sau khi đoán đúng. Không trả khoảng cách để tránh dò vị trí. Dự đoán giới hạn 10 lần/phút/tài khoản. Ảnh tối đa 8 MB, được mã hóa lại JPEG và bỏ metadata GPS. Token đăng nhập lưu dưới dạng hash phía server, hết hạn sau 7 ngày; web giữ token trong sessionStorage của tab.
+
+## Kiểm thử
+
+```sh
+python -m pytest -q
+node --check app/static/app.js
+```
+
+## Cấu trúc
+
+```text
+app/main.py       API, xác thực, xử lý ảnh và luật chơi
+app/models.py     User, Token, Case, Solve, Comment, Attempt
+app/database.py   SQLite/PostgreSQL và session
+app/static/       Giao diện web HTML/CSS/JavaScript
+tests/            Kiểm thử tích hợp
+docker-compose.yml  API + PostgreSQL + volumes
+```
+
+## Phạm vi và triển khai
+
+Đây là MVP web và API, chưa có binary iOS/Android hay bản đồ tương tác. Chưa triển khai lên máy chủ thật. Trước khi mở công khai, cần HTTPS qua reverse proxy, giới hạn request/body tại proxy, sao lưu DB/ảnh, kiểm duyệt/báo cáo nội dung, chống spam đăng ký/đăng ảnh/bình luận, quên mật khẩu và chính sách quyền riêng tư. Hiện chỉ cộng XP cho đoán đúng; điểm tương tác chưa bật để tránh khuyến khích spam.
+
+Schema đã thay đổi so với bản check-in ban đầu. `create_all` chỉ tạo bảng mới, không migrate bảng cũ. Không dùng trực tiếp với database cũ: sao lưu và tạo database mới, hoặc viết migration trước khi nâng cấp. Compose dùng volume `postgres_data` mới và không xóa volume `jinhunt_postgres_data` trước đây.
+
+Không commit `.env`, database, token hay ảnh người dùng. Giữ bản sao lưu riêng của các volume khi chuyển máy chủ.
