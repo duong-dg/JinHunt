@@ -40,7 +40,7 @@ header.sidebar{background:linear-gradient(180deg,#fff,#f4fbfd);border-right-colo
 
 /* Desktop: give photographs more room and keep supporting widgets compact. */
 @media(min-width:1041px){
-  .workspace{max-width:none;grid-template-columns:minmax(0,1fr) 200px;gap:24px;padding:44px 24px 30px}
+  .workspace{max-width:none;grid-template-columns:minmax(0,1fr) 240px;gap:24px;padding:44px 24px 30px}
   .right-rail .journey{padding-bottom:20px}
   .right-rail .journey>.eyebrow{margin-bottom:16px}
   .right-rail .journey-user{gap:9px}
@@ -58,14 +58,11 @@ header.sidebar{background:linear-gradient(180deg,#fff,#f4fbfd);border-right-colo
 @media(max-width:1040px){.legal-footer,.legal-draft-hint{margin-left:220px}}@media(max-width:700px){.legal-footer,.legal-draft-hint{margin-left:96px}}@media(max-width:520px){.consent-fields{padding:12px}.consent-check{font-size:14px;gap:9px}.legal-footer{margin:0 18px 12px;gap:10px 18px;font-size:12px}.legal-draft-hint{margin:8px 18px 95px}.privacy-actions{font-size:14px}}
 .legal-footer{width:auto;max-width:none}
 /* Keep policy links secondary while preserving readable, usable targets. */
-.legal-footer{font-size:12px;gap:4px 16px}
+.legal-footer{font-size:11px;gap:4px 16px}
 .legal-footer a{display:inline-flex;align-items:center;min-height:44px;color:#607786;text-decoration:none}
 .legal-footer a:hover,.legal-footer a:focus-visible{color:#08789d;text-decoration:underline}
-@media(min-width:701px){
-  header.sidebar{overflow-y:auto}
-  .sidebar-bottom{padding:20px 4px 0}
-  .sidebar-bottom>.compass,.sidebar-bottom>p{display:none}
-  .sidebar .legal-footer{display:grid;grid-template-columns:1fr 1fr;gap:0 8px;margin:12px 0 0;width:100%;align-items:start}
-  .sidebar .legal-footer a{font-size:12px;line-height:1.5;min-height:44px}
-  .sidebar .legal-draft-hint{margin:8px 0 0;font-size:11px;text-align:left;line-height:1.7}
+@media(min-width:1041px){
+  .right-rail .legal-footer{display:grid;grid-template-columns:1fr 1fr;gap:0 10px;margin:0;width:100%;align-items:start}
+  .right-rail .legal-footer a{font-size:11px;line-height:1.5;min-height:44px}
+  .right-rail .legal-draft-hint{margin:0;font-size:11px;text-align:left;line-height:1.7}
 }
