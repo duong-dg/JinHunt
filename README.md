@@ -2,6 +2,8 @@
 
 Ứng dụng đoán địa điểm qua ảnh. MVP gồm FastAPI và giao diện web responsive tiếng Việt, dùng chung API cho client iOS/Android tương lai.
 
+**Bản local đang bổ sung pháp lý và người đại diện:** xem [docs/legal-review.md](docs/legal-review.md). Có `/terms`, `/privacy`, `/copyright`, `/support`, xác nhận chính sách có phiên bản, xác nhận quyền đăng ảnh và tài khoản dưới 18 tuổi do người đại diện quản lý. Chưa thể coi app là đã đáp ứng đầy đủ pháp luật chỉ nhờ những trang này; cần hoàn thiện bên vận hành, SMTP, xác minh và thủ tục theo phân loại dịch vụ trước khi mở công khai. Thông tin vận hành còn trống sẽ hiện nhãn bản dự thảo.
+
 Trang chủ hiển thị feed ảnh lớn, thanh điều hướng bên trái và hồ sơ/XP/bảng xếp hạng ở bên phải trên desktop. Tablet thu gọn bố cục; điện thoại dùng thanh điều hướng dưới cùng. Mỗi bài có nút thả tim và mở phần bình luận/dự đoán. Feed tải 12 bài mỗi lượt, có nút xem thêm. Chưa có tính năng theo dõi hoặc nhắn tin.
 
 Form đăng ảnh và dự đoán có nút **Lấy vị trí hiện tại**, không cần nhập vĩ độ/kinh độ. Trình duyệt chỉ xin quyền định vị sau khi bấm nút. Dùng vị trí máy khi đang ở đúng địa điểm trong ảnh; ảnh chụp nơi khác có thể chỉ dùng đáp án tên. Có thể bỏ vị trí, hủy đang lấy hoặc thử lại khi bị từ chối quyền/GPS kém. Sai số trên 150 m không được đính kèm. Vị trí chỉ gửi cùng thao tác đăng bài/dự đoán, không hiện trên feed. GPS trên web cần **HTTPS** (ngoại lệ localhost khi phát triển); HTTP qua IP server không dùng được định vị. Đây không phải bằng chứng chống giả GPS.
@@ -55,8 +57,8 @@ Mặc định dùng SQLite (`jinhunt.db`), ảnh trong `uploads/`. Có thể đ�
 
 ## Luồng chơi
 
-1. Đăng ký tài khoản (username không dấu 3–30 ký tự, mật khẩu ít nhất 8 ký tự, email hoặc số điện thoại). Đăng nhập bằng username/email/SĐT. Số Việt Nam bắt đầu bằng 0 được chuẩn hóa sang +84; số quốc tế cần mã quốc gia.
-2. Tải ảnh, nhập tiêu đề, gợi ý và tên đáp án bí mật. Tọa độ là tùy chọn.
+1. Đăng ký tài khoản: username không dấu 3–30 ký tự, ngày sinh người chơi và hai ô đồng ý riêng. Người từ đủ 18 tuổi cần mật khẩu ít nhất 8 ký tự, email hoặc SĐT. Người dưới 18 tuổi cần email người đại diện; chỉ kích hoạt sau khi người đại diện xác nhận và đặt mật khẩu quản lý. Không có SMTP thì luồng dưới 18 tuổi chưa mở. Đăng nhập bằng username/email/SĐT; tài khoản được quản lý dùng thông tin và mật khẩu do người đại diện xác lập. Số Việt Nam bắt đầu bằng 0 được chuẩn hóa sang +84.
+2. Tải ảnh, xác nhận quyền sử dụng/quyền đăng ảnh, nhập tiêu đề, gợi ý và đáp án bí mật. Tọa độ là tùy chọn, chưa mở GPS cho tài khoản được người đại diện quản lý.
 3. Người khác đoán bằng tên (không phân biệt hoa/thường và dấu tiếng Việt) hoặc tọa độ trong bán kính 150 m mặc định.
 4. Đoán đúng nhận 50 XP một lần duy nhất. Người tạo không được tự giải. Mỗi 200 XP lên một level.
 5. Bình luận công khai; bình luận có chứa đầy đủ tên đáp án được che, kể cả trong API. Các biến thể/cách nói gián tiếp chưa được nhận diện.
@@ -101,4 +103,4 @@ docker compose up -d --build
 docker compose logs --tail=100 api
 ```
 
-Cấu trúc danh tính ngoài có khóa duy nhất `(provider, subject)` và `(user_id, provider)` để tích hợp Google/Facebook sau. Hiện chưa có OAuth, nút đăng nhập Google/Facebook, xác nhận email hay SMS OTP. Khi tích hợp cần cấu hình app/redirect URI từ nhà cung cấp, kiểm tra token/issuer/audience/nonce/state phía server và chỉ liên kết qua phiên người dùng đã xác thực; không tự ghép bằng email chưa xác minh.
+Cấu trúc danh tính ngoài có khóa duy nhất `(provider, subject)` và `(user_id, provider)` để tích hợp Google/Facebook sau. Hiện chưa có OAuth, nút đăng nhập Google/Facebook, xác minh email tài khoản thường hay SMS OTP. Riêng luồng người đại diện có xác nhận qua liên kết email (cần SMTP), chưa thay thế xác thực danh tính/quan hệ đại diện. Khi tích hợp OAuth cần cấu hình app/redirect URI từ nhà cung cấp, kiểm tra token/issuer/audience/nonce/state phía server và chỉ liên kết qua phiên người dùng đã xác thực; không tự ghép bằng email chưa xác minh.

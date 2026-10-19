@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Text, ForeignKey, DateTime, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Text, ForeignKey, DateTime, UniqueConstraint, Date
 from sqlalchemy.sql import func
 from .database import Base
 
@@ -13,6 +13,52 @@ class User(Base):
     avatar_url = Column(String(255), nullable=True)
     email = Column(String(254), unique=True, nullable=True)
     phone = Column(String(20), unique=True, nullable=True)
+    player_birth_date = Column(Date, nullable=True)
+    account_status = Column(String(30), default="active", nullable=False)
+    guardian_managed = Column(Integer, default=0, nullable=False)
+
+class LegalConsent(Base):
+    __tablename__ = "legal_consents"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    version = Column(String(50), nullable=False)
+    notice_snapshot = Column(Text, nullable=False)
+    actor_type = Column(String(20), nullable=False)
+    guardian_name = Column(String(150), nullable=True)
+    guardian_birth_date = Column(Date, nullable=True)
+    relationship = Column(String(50), nullable=True)
+    child_assent = Column(Integer, default=0, nullable=False)
+    accepted_at = Column(Float, nullable=False)
+    withdrawn_at = Column(Float, nullable=True)
+
+class GuardianInvite(Base):
+    __tablename__ = "guardian_invites"
+    token_hash = Column(String(64), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    guardian_email = Column(String(254), nullable=False)
+    expires_at = Column(Float, nullable=False)
+    created_at = Column(Float, nullable=False)
+    used_at = Column(Float, nullable=True)
+
+class LegalRequest(Base):
+    __tablename__ = "legal_requests"
+    reference = Column(String(24), primary_key=True)
+    kind = Column(String(30), nullable=False)
+    email = Column(String(254), nullable=False)
+    name = Column(String(150), nullable=False)
+    details = Column(Text, nullable=False)
+    content_url = Column(String(500), nullable=True)
+    created_at = Column(Float, nullable=False)
+    status = Column(String(30), default="received", nullable=False)
+    legal_version = Column(String(50), nullable=True)
+
+class ContentAttestation(Base):
+    __tablename__ = "content_attestations"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    resource = Column(String(255), nullable=False)
+    legal_version = Column(String(50), nullable=False)
+    accepted_at = Column(Float, nullable=False)
 
 class ExternalIdentity(Base):
     """Reserved for verified provider subject IDs; never link by email alone."""

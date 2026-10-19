@@ -3,11 +3,14 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.main import app
+from app.legal import VERSION
+
+LEGAL_FIELDS = {'player_birth_date':'2000-01-01','terms_accepted':True,'privacy_accepted':True,'legal_version':VERSION}
 
 @pytest.fixture
 def client():
@@ -24,7 +27,7 @@ def client():
     engine.dispose()
 
 def account(client, username):
-    r = client.post('/api/auth/register', json={'username': username, 'password': 'test-password-123', 'email': f'{username}@example.com'})
+    r = client.post('/api/auth/register', json={'username': username, 'password': 'test-password-123', 'email': f'{username}@example.com',**LEGAL_FIELDS})
     assert r.status_code == 201, r.text
     return {'Authorization': 'Bearer ' + r.json()['token']}
 
@@ -34,12 +37,12 @@ def create_case(client, headers, **extra):
     exif = Image.Exif()
     exif[270] = 'Private original metadata'
     image.save(stream, 'JPEG', exif=exif)
-    r = client.post('/api/uploads', headers=headers, files={'file': ('secret-location.jpg', stream.getvalue(), 'image/jpeg')})
+    r = client.post('/api/uploads', headers=headers, data={'rights_confirmed':'true'},files={'file': ('secret-location.jpg', stream.getvalue(), 'image/jpeg')})
     assert r.status_code == 201
     url = r.json()['image_url']
     clean = Image.open(io.BytesIO(client.get(url).content))
     assert not clean.getexif()
-    body = dict(title='Góc phố bí ẩn', answer='Chợ Bến Thành', image_url=url, **extra)
+    body = dict(title='Góc phố bí ẩn', answer='Chợ Bến Thành', image_url=url, content_rights_confirmed=True,**extra)
     r = client.post('/api/cases', headers=headers, json=body)
     assert r.status_code == 201, r.text
     return r.json()
@@ -83,18 +86,18 @@ def test_coordinates_rate_limit_and_validation(client):
 
 def test_auth_logout_and_upload_ownership(client):
     owner, player = account(client, 'owner'), account(client, 'player')
-    assert client.post('/api/auth/register', json={'username': 'OWNER', 'password': 'test-password-123', 'email': 'another@example.com'}).status_code == 409
+    assert client.post('/api/auth/register', json={'username': 'OWNER', 'password': 'test-password-123', 'email': 'another@example.com',**LEGAL_FIELDS}).status_code == 409
     assert client.post('/api/auth/login', json={'username': 'owner', 'password': 'wrong-password'}).status_code == 401
     assert client.post('/api/auth/login', json={'username': 'owner', 'password': 'test-password-123'}).status_code == 200
     c = create_case(client, owner)
-    assert client.post('/api/cases', headers=player, json={'title': 'Another', 'answer': 'Somewhere', 'image_url': c['image_url']}).status_code == 400
+    assert client.post('/api/cases', headers=player, json={'title': 'Another', 'answer': 'Somewhere', 'image_url': c['image_url'],'content_rights_confirmed':True}).status_code == 400
     assert client.post('/api/auth/logout', headers=player).status_code == 204
     assert client.get('/api/me', headers=player).status_code == 401
     assert client.get('/').status_code == 200
     assert client.get('/static/app.js').status_code == 200
 
 def test_contact_registration_profile_and_privacy(client):
-    base = {'username': 'tester', 'password': 'test-password-123'}
+    base = {'username': 'tester', 'password': 'test-password-123',**LEGAL_FIELDS}
     assert client.post('/api/auth/register', json=base).status_code == 422
     assert client.post('/api/auth/register', json={**base, 'email': 'bad@'}).status_code == 422
     assert client.post('/api/auth/register', json={**base, 'phone': 'abc'}).status_code == 422
@@ -155,7 +158,7 @@ def test_avatar_upload_display_name_and_comment_identity(client):
     assert client.post('/api/me/avatar', files=files).status_code == 401
     assert client.delete('/api/me/avatar').status_code == 401
     assert client.post('/api/me/avatar', headers=player, files={'file': ('bad.jpg', b'bad', 'image/jpeg')}).status_code == 400
-    uploaded = client.post('/api/me/avatar', headers=player, files=files)
+    uploaded = client.post('/api/me/avatar', headers=player, data={'rights_confirmed':'true'},files=files)
     assert uploaded.status_code == 200
     avatar_url = uploaded.json()['avatar_url']
     assert avatar_url.startswith('/uploads/avatar-')
@@ -163,7 +166,7 @@ def test_avatar_upload_display_name_and_comment_identity(client):
     assert clean.size == (512, 512) and not clean.getexif()
     assert client.get('/api/me', headers=owner).json()['avatar_url'] is None
     assert client.patch('/api/me', headers=player, json={'avatar_url':'https://example.com/track.jpg'}).status_code == 422
-    assert client.post('/api/cases', headers=player, json={'title':'Somewhere', 'answer':'A place', 'image_url':avatar_url}).status_code == 400
+    assert client.post('/api/cases', headers=player, json={'title':'Somewhere', 'answer':'A place', 'image_url':avatar_url,'content_rights_confirmed':True}).status_code == 400
     client.patch('/api/me', headers=player, json={'display_name':'Người thích khám phá'})
     path = f'/api/cases/{case["id"]}/comments'
     client.post(path, headers=player, json={'content':'Góc ảnh đẹp!'})
@@ -266,3 +269,115 @@ def test_notification_pagination(client):
     assert len(older['items'])==5 and older['next_before_id'] is None
     assert not ({n['id'] for n in page['items']} & {n['id'] for n in older['items']})
     assert client.get('/api/notifications', headers=player).json()['items']==[]
+
+def test_explicit_legal_consent_and_rights(client):
+    from app.models import LegalConsent, ContentAttestation
+    base={'username':'legaluser','email':'legal@example.com','password':'test-password-123',**LEGAL_FIELDS}
+    for change in [{'terms_accepted':False},{'privacy_accepted':False},{'privacy_accepted':'true'},{'legal_version':'old'},{'player_birth_date':'2100-01-01'}]:
+        assert client.post('/api/auth/register',json={**base,**change}).status_code==422
+    missing=base.copy();missing.pop('terms_accepted')
+    assert client.post('/api/auth/register',json=missing).status_code==422
+    response=client.post('/api/auth/register',json=base)
+    assert response.status_code==201
+    headers={'Authorization':'Bearer '+response.json()['token']}
+    assert client.get('/api/me',headers=headers).json()['needs_legal_consent'] is False
+    assert client.post('/api/uploads',headers=headers,files={'file':('x.jpg',b'bad','image/jpeg')}).status_code==400
+    c=create_case(client,headers)
+    assert client.post('/api/cases',headers=headers,json={'title':'New case','answer':'A place','image_url':c['image_url']}).status_code==422
+    database=app.dependency_overrides[get_db]();db=next(database)
+    consent=db.scalar(select(LegalConsent))
+    import json
+    snapshot=json.loads(consent.notice_snapshot)
+    assert consent.version==VERSION and consent.actor_type=='adult' and consent.accepted_at>0
+    assert all(len(digest)==64 for digest in snapshot['documents'].values())
+    assert len(list(db.scalars(select(ContentAttestation))))==2
+    database.close()
+
+def test_guardian_activation_no_token_leak_and_controls(client,monkeypatch):
+    import app.legal as legal
+    sent=[]
+    monkeypatch.setattr(legal,'send_guardian_email',lambda email,link:sent.append((email,link)))
+    data={'username':'youngplayer','password':'old-password-123',**LEGAL_FIELDS,'player_birth_date':'2013-05-17','guardian_email':'parent@example.com'}
+    response=client.post('/api/auth/register',json=data)
+    assert response.status_code==201 and response.json()['status']=='pending_guardian'
+    assert 'token' not in response.json() and 'link' not in response.json()
+    assert client.post('/api/auth/login',json={'username':'youngplayer','password':'old-password-123'}).status_code==403
+    assert 'youngplayer' not in client.get('/api/leaderboard').text
+    from urllib.parse import urlsplit,parse_qs
+    raw=parse_qs(urlsplit(sent[0][1]).fragment)['token'][0]
+    assert '?' not in sent[0][1] and len(raw)>=32
+    preview=client.post('/api/guardian/preview',json={'token':raw}).json()
+    assert preview['requires_child_assent'] is True
+    assert 'player_birth_date' not in preview and 'guardian_email' not in preview
+    approval={'token':raw,'legal_version':VERSION,'terms_accepted':True,'privacy_accepted':True,'guardian_name':'Người đại diện','guardian_birth_date':'1985-01-01','relationship':'mother','authority_confirmed':True,'child_assent_confirmed':True,'new_password':'parent-password-123','display_name':'Nhà khám phá nhỏ'}
+    assert client.post('/api/guardian/approve',json={**approval,'child_assent_confirmed':False}).status_code==400
+    assert client.post('/api/guardian/approve',json={**approval,'guardian_birth_date':'2015-01-01'}).status_code==422
+    assert client.post('/api/guardian/approve',json=approval).status_code==200
+    assert client.post('/api/guardian/approve',json=approval).status_code==400
+    assert client.post('/api/guardian/preview',json={'token':raw}).status_code==400
+    assert client.post('/api/auth/login',json={'username':'youngplayer','password':'old-password-123'}).status_code==401
+    login=client.post('/api/auth/login',json={'username':'parent@example.com','password':'parent-password-123'})
+    assert login.status_code==200
+    headers={'Authorization':'Bearer '+login.json()['token']}
+    assert login.json()['user']['guardian_managed'] is True
+    assert login.json()['user']['needs_legal_consent'] is False
+    owner=account(client,'owner');c=create_case(client,owner,latitude=10.772,longitude=106.698)
+    assert client.post(f'/api/cases/{c["id"]}/comments',headers=headers,json={'latitude':10.772,'longitude':106.698}).status_code==403
+    assert client.post(f'/api/cases/{c["id"]}/comments',headers=headers,json={'content':'Ảnh đẹp quá'}).status_code==201
+    public=client.get('/api/leaderboard').text
+    assert 'parent@example.com' not in public and '1985-01-01' not in public and '2013-05-17' not in public
+
+def test_guardian_mail_failure_and_expiry(client,monkeypatch):
+    import app.legal as legal
+    from app.models import User,GuardianInvite
+    monkeypatch.delenv('SMTP_HOST',raising=False);monkeypatch.delenv('SMTP_FROM',raising=False)
+    data={'username':'pendingchild',**LEGAL_FIELDS,'player_birth_date':'2022-01-01','guardian_email':'parent@example.com'}
+    assert client.post('/api/auth/register',json=data).status_code==503
+    database=app.dependency_overrides[get_db]();db=next(database)
+    assert db.scalar(select(User).where(User.username=='pendingchild')) is None
+    database.close()
+    sent=[];monkeypatch.setattr(legal,'send_guardian_email',lambda email,link:sent.append(link))
+    assert client.post('/api/auth/register',json=data).status_code==201
+    raw=sent[0].split('#token=')[1]
+    assert client.post('/api/guardian/preview',json={'token':raw}).json()['requires_child_assent'] is False
+    database=app.dependency_overrides[get_db]();db=next(database)
+    db.scalar(select(GuardianInvite)).expires_at=0;db.commit();database.close()
+    assert client.post('/api/guardian/preview',json={'token':raw}).status_code==400
+
+def test_legacy_consent_and_withdrawal_revokes_sessions(client):
+    from app.models import LegalConsent
+    headers=account(client,'legacy')
+    user_id=client.get('/api/me',headers=headers).json()['id']
+    database=app.dependency_overrides[get_db]();db=next(database)
+    from sqlalchemy import delete
+    db.execute(delete(LegalConsent).where(LegalConsent.user_id==user_id));db.commit();database.close()
+    assert client.get('/api/me',headers=headers).json()['needs_legal_consent'] is True
+    other=account(client,'owner');c=create_case(client,other)
+    assert client.put(f'/api/cases/{c["id"]}/like',headers=headers).status_code==403
+    assert client.post('/api/me/legal-consent',headers=headers,json=LEGAL_FIELDS).status_code==200
+    assert client.put(f'/api/cases/{c["id"]}/like',headers=headers).status_code==200
+    own_case=create_case(client,headers)
+    client.post(f'/api/cases/{c["id"]}/comments',headers=headers,json={'content':'Nội dung cũ cần ngừng hiển thị'})
+    assert client.post('/api/me/withdraw-consent',headers=headers).status_code==200
+    assert client.get('/api/me',headers=headers).status_code==401
+    assert client.post('/api/auth/login',json={'username':'legacy','password':'test-password-123'}).status_code==403
+    assert client.get(f'/api/cases/{own_case["id"]}').status_code==404
+    assert client.get(own_case['image_url']).status_code==404
+    assert 'Nội dung cũ cần ngừng hiển thị' not in client.get(f'/api/cases/{c["id"]}/comments').text
+
+def test_legal_pages_and_private_request_intake(client,monkeypatch):
+    monkeypatch.setenv('LEGAL_OPERATOR_NAME','<script>alert(1)</script>')
+    for path in ['/terms','/privacy','/copyright','/support','/guardian-consent']:
+        response=client.get(path)
+        assert response.status_code==200 and response.headers['cache-control']=='no-store'
+        assert '<script>alert(1)</script>' not in response.text
+        assert '&lt;script&gt;' in response.text
+    data={'kind':'copyright','name':'Chủ tác phẩm','email':'rights@example.com','content_url':'/api/cases/1','details':'Tôi là tác giả của bức ảnh, xin kiểm tra quyền sử dụng ảnh.','contact_consent':True}
+    assert client.post('/api/legal/requests',json={**data,'contact_consent':False}).status_code==422
+    refs=[]
+    for _ in range(5):
+        response=client.post('/api/legal/requests',json=data)
+        assert response.status_code==201;refs.append(response.json()['reference'])
+    assert len(set(refs))==5 and all(len(ref)==24 for ref in refs)
+    assert client.post('/api/legal/requests',json=data).status_code==429
+    assert client.get('/api/legal/requests').status_code==405

@@ -11,7 +11,7 @@ import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, Query
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, Query, Form
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -20,8 +20,9 @@ from sqlalchemy import select, func, update, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
-from .models import User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias
+from .models import User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation
 from .migrations import upgrade
+from .legal import ConsentInput, VERSION as LEGAL_VERSION, age, latest_consent, record_consent, start_guardian, build_router
 
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -34,7 +35,13 @@ async def lifespan(app):
 
 app = FastAPI(title="JinHunt API", version="0.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+@app.get("/uploads/{filename}",include_in_schema=False)
+def uploaded_image(filename: str, db: Session = Depends(get_db)):
+    match = re.fullmatch(r"(?:avatar-)?([0-9]+)-[a-f0-9]{32}\.jpg",filename)
+    owner = db.get(User,int(match.group(1))) if match else None
+    if not owner or owner.account_status != "active" or not (UPLOAD_DIR/filename).is_file():
+        raise HTTPException(404,"Không tìm thấy ảnh.")
+    return FileResponse(UPLOAD_DIR/filename,media_type="image/jpeg",headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"})
 
 def normalize(value):
     value = unicodedata.normalize("NFD", value.lower().replace("đ", "d"))
@@ -46,16 +53,26 @@ def public_user(user):
             "bio": user.bio or "", "avatar_url": user.avatar_url,
             "xp": user.total_xp, "level": user.total_xp // 200 + 1}
 
-def private_user(user):
+def private_user(user, db=None):
     return {**public_user(user), "email": user.email, "phone": user.phone,
-            "contact_verified": False}
+            "contact_verified": False, "guardian_managed":bool(user.guardian_managed),
+            "needs_legal_consent":bool(db is not None and (not user.player_birth_date or not latest_consent(db,user))),
+            "legal_version":LEGAL_VERSION}
 
 def current_user(authorization: str = Header(default=""), db: Session = Depends(get_db)):
     raw = authorization.removeprefix("Bearer ")
     token = db.get(Token, hashlib.sha256(raw.encode()).hexdigest())
     if not authorization.startswith("Bearer ") or not token or token.expires_at < time.time():
         raise HTTPException(401, "Vui lòng đăng nhập lại.")
-    return db.get(User, token.user_id)
+    user = db.get(User, token.user_id)
+    if user.account_status != "active":
+        raise HTTPException(403,"Tài khoản chưa được kích hoạt hoặc đã dừng. Hãy kiểm tra xác nhận người đại diện hoặc liên hệ hỗ trợ.")
+    return user
+
+def participant(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not user.player_birth_date or not latest_consent(db,user):
+        raise HTTPException(403,"Cần xác nhận độ tuổi, Điều khoản sử dụng và Chính sách quyền riêng tư trong tài khoản trước khi tham gia.")
+    return user
 
 def optional_user(authorization: str = Header(default=""), db: Session = Depends(get_db)):
     return current_user(authorization, db) if authorization else None
@@ -148,14 +165,16 @@ class ProfileUpdate(BaseModel):
     def trim_text(cls, value):
         return value.strip() if value else None
 
-class Registration(ProfileUpdate):
+class Registration(ProfileUpdate, ConsentInput):
     username: str = Field(pattern=r"^[a-zA-Z0-9_]{3,30}$")
-    password: str = Field(min_length=8, max_length=128)
+    password: str | None = Field(default=None,min_length=8, max_length=128)
 
     @model_validator(mode="after")
     def require_contact(self):
-        if not self.email and not self.phone:
+        if age(self.player_birth_date)>=18 and not self.email and not self.phone:
             raise ValueError("Cần cung cấp email hoặc số điện thoại.")
+        if age(self.player_birth_date)>=18 and not self.password:
+            raise ValueError("Người từ đủ 18 tuổi cần đặt mật khẩu.")
         return self
 
 def password_hash(password, salt=None):
@@ -167,7 +186,7 @@ def session_response(user, db):
     raw = secrets.token_urlsafe(32)
     db.add(Token(token_hash=hashlib.sha256(raw.encode()).hexdigest(), user_id=user.id, expires_at=time.time() + 86400 * 7))
     db.commit()
-    return {"token": raw, "user": private_user(user)}
+    return {"token": raw, "user": private_user(user,db)}
 
 @app.get("/", include_in_schema=False)
 def home():
@@ -180,14 +199,22 @@ def health(db: Session = Depends(get_db)):
 
 @app.post("/api/auth/register", status_code=201)
 def register(data: Registration, db: Session = Depends(get_db)):
-    user = User(username=data.username.lower(), password_hash=password_hash(data.password),
-                email=data.email, phone=data.phone, display_name=data.display_name, bio=data.bio)
+    minor = age(data.player_birth_date)<18
+    user = User(username=data.username.lower(), password_hash=password_hash(data.password or secrets.token_urlsafe(32)),
+                email=None if minor else data.email, phone=None if minor else data.phone,
+                display_name=data.display_name, bio="" if minor else data.bio,player_birth_date=data.player_birth_date,
+                account_status="pending_guardian" if minor else "active",guardian_managed=int(minor))
     db.add(user)
     try:
         db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Tên người dùng hoặc thông tin liên hệ đã được sử dụng.")
+    if minor:
+        start_guardian(db,user,data.guardian_email)
+        db.commit()
+        return {"status":"pending_guardian","message":"Yêu cầu xác nhận đã gửi qua email người đại diện. Chưa thể đăng nhập; người đại diện cần đọc chính sách và đặt mật khẩu quản lý."}
+    record_consent(db,user)
     return session_response(user, db)
 
 @app.post("/api/auth/login")
@@ -207,6 +234,8 @@ def login(data: Credentials, db: Session = Depends(get_db)):
         user = db.scalar(select(User).where(User.username == identifier))
     if not user or not hmac.compare_digest(user.password_hash, password_hash(data.password, user.password_hash.split(":")[0])):
         raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu chưa đúng.")
+    if user.account_status != "active":
+        raise HTTPException(403,"Tài khoản đang chờ người đại diện xác nhận hoặc đã dừng. Hãy kiểm tra email người đại diện/liên hệ hỗ trợ.")
     return session_response(user, db)
 
 @app.post("/api/auth/logout", status_code=204)
@@ -216,8 +245,8 @@ def logout(user: User = Depends(current_user), authorization: str = Header(), db
     db.commit()
 
 @app.get("/api/me")
-def me(user: User = Depends(current_user)):
-    return private_user(user)
+def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return private_user(user,db)
 
 @app.patch("/api/me")
 def edit_profile(data: ProfileUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -233,7 +262,7 @@ def edit_profile(data: ProfileUpdate, user: User = Depends(current_user), db: Se
         db.rollback()
         raise HTTPException(409, "Thông tin liên hệ đã được sử dụng.")
     db.refresh(user)
-    return private_user(user)
+    return private_user(user,db)
 
 async def save_image(file, user, avatar=False):
     data = await file.read(8 * 1024 * 1024 + 1)
@@ -258,21 +287,29 @@ async def save_image(file, user, avatar=False):
     return f"/uploads/{filename}"
 
 @app.post("/api/uploads", status_code=201)
-async def upload(file: UploadFile = File(), user: User = Depends(current_user)):
-    return {"image_url": await save_image(file, user)}
+async def upload(file: UploadFile = File(), rights_confirmed: bool = Form(default=False), user: User = Depends(participant), db: Session = Depends(get_db)):
+    if not rights_confirmed:
+        raise HTTPException(400,"Cần xác nhận quyền sử dụng và quyền đăng ảnh trước khi tải lên.")
+    image_url = await save_image(file,user)
+    db.add(ContentAttestation(user_id=user.id,resource=image_url,legal_version=LEGAL_VERSION,accepted_at=time.time()))
+    db.commit()
+    return {"image_url":image_url}
 
 @app.post("/api/me/avatar")
-async def upload_avatar(file: UploadFile = File(), user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def upload_avatar(file: UploadFile = File(), rights_confirmed: bool = Form(default=False), user: User = Depends(participant), db: Session = Depends(get_db)):
+    if not rights_confirmed:
+        raise HTTPException(400,"Cần xác nhận quyền sử dụng ảnh đại diện trước khi tải lên.")
     user.avatar_url = await save_image(file, user, avatar=True)
+    db.add(ContentAttestation(user_id=user.id,resource=user.avatar_url,legal_version=LEGAL_VERSION,accepted_at=time.time()))
     db.commit()
     db.refresh(user)
-    return private_user(user)
+    return private_user(user,db)
 
 @app.delete("/api/me/avatar")
 def remove_avatar(user: User = Depends(current_user), db: Session = Depends(get_db)):
     user.avatar_url = None
     db.commit()
-    return private_user(user)
+    return private_user(user,db)
 
 class CaseCreate(BaseModel):
     title: str = Field(min_length=3, max_length=100)
@@ -280,12 +317,15 @@ class CaseCreate(BaseModel):
     image_url: str = Field(max_length=255)
     answer: str = Field(min_length=2, max_length=200)
     aliases: list[str] = Field(default_factory=list, max_length=10)
+    content_rights_confirmed: bool = Field(default=False,strict=True)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     radius_meters: int = Field(default=150, ge=20, le=1000)
 
     @model_validator(mode="after")
     def valid_location(self):
+        if not self.content_rights_confirmed:
+            raise ValueError("Cần xác nhận quyền sử dụng ảnh và trách nhiệm nội dung.")
         if (self.latitude is None) != (self.longitude is None):
             raise ValueError("Cần nhập cả vĩ độ và kinh độ.")
         if len(normalize(self.answer)) < 2 or not self.title.strip():
@@ -296,7 +336,7 @@ class CaseCreate(BaseModel):
 
 def get_case(case_id, db):
     case = db.get(Case, case_id)
-    if not case:
+    if not case or db.get(User,case.creator_id).account_status != "active":
         raise HTTPException(404, "Không tìm thấy thử thách.")
     return case
 
@@ -313,22 +353,25 @@ def public_case(case, db, viewer=None):
             "created_at": case.created_at}
 
 @app.post("/api/cases", status_code=201)
-def create_case(data: CaseCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_case(data: CaseCreate, user: User = Depends(participant), db: Session = Depends(get_db)):
+    if user.guardian_managed and data.latitude is not None:
+        raise HTTPException(403,"Tài khoản được người đại diện quản lý chưa sử dụng GPS trong bản thử nghiệm.")
     filename = data.image_url.removeprefix("/uploads/")
     if not re.fullmatch(rf"{user.id}-[a-f0-9]{{32}}\.jpg", filename) or not (UPLOAD_DIR / filename).is_file():
         raise HTTPException(400, "Vui lòng tải ảnh của bạn lên trước.")
-    case = Case(**data.model_dump(exclude={"aliases"}), creator_id=user.id)
+    case = Case(**data.model_dump(exclude={"aliases","content_rights_confirmed"}), creator_id=user.id)
     db.add(case)
     db.flush()
     for answer in {normalize(alias) for alias in data.aliases} - {normalize(data.answer)}:
         db.add(AnswerAlias(case_id=case.id, answer=answer))
+    db.add(ContentAttestation(user_id=user.id,resource=f"case:{case.id}",legal_version=LEGAL_VERSION,accepted_at=time.time()))
     db.commit()
     db.refresh(case)
     return public_case(case, db, user)
 
 @app.get("/api/cases")
 def list_cases(offset: int = Query(default=0, ge=0), limit: int = Query(default=24, ge=1, le=100), db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
-    return [public_case(c, db, viewer) for c in db.scalars(select(Case).order_by(Case.id.desc()).offset(offset).limit(limit))]
+    return [public_case(c, db, viewer) for c in db.scalars(select(Case).join(User,Case.creator_id==User.id).where(User.account_status=="active").order_by(Case.id.desc()).offset(offset).limit(limit))]
 
 @app.get("/api/cases/{case_id}")
 def case_detail(case_id: int, db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
@@ -340,7 +383,9 @@ class Guess(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
 
 @app.post("/api/cases/{case_id}/guesses")
-def guess(case_id: int, data: Guess, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def guess(case_id: int, data: Guess, user: User = Depends(participant), db: Session = Depends(get_db)):
+    if user.guardian_managed and data.latitude is not None:
+        raise HTTPException(403,"Tài khoản được người đại diện quản lý chưa sử dụng GPS.")
     case = get_case(case_id, db)
     if case.creator_id == user.id:
         raise HTTPException(400, "Bạn là người tạo thử thách này.")
@@ -380,6 +425,9 @@ def comments(case_id: int, db: Session = Depends(get_db)):
     result = []
     for c in rows:
         author = db.get(User, c.user_id)
+        if author.account_status != "active":
+            result.append({"id":c.id,"username":"account-paused","display_name":"Tài khoản đã dừng","avatar_url":None,"content":"Bình luận không còn hiển thị.","is_hidden":True,"created_at":c.created_at})
+            continue
         result.append({"id": c.id, "username": author.username,
              "display_name": author.display_name or author.username, "avatar_url": author.avatar_url,
              "content": "Đã ẩn nội dung dự đoán." if c.is_hidden else c.content,
@@ -387,7 +435,9 @@ def comments(case_id: int, db: Session = Depends(get_db)):
     return result
 
 @app.post("/api/cases/{case_id}/comments", status_code=201)
-def comment(case_id: int, data: CommentCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def comment(case_id: int, data: CommentCreate, user: User = Depends(participant), db: Session = Depends(get_db)):
+    if user.guardian_managed and data.latitude is not None:
+        raise HTTPException(403,"Tài khoản được người đại diện quản lý chưa sử dụng GPS.")
     case = get_case(case_id, db)
     limit_attempt(db, user, case_id)
     content = data.content.strip()
@@ -411,7 +461,7 @@ def comment(case_id: int, data: CommentCreate, user: User = Depends(current_user
     return {"id": entry.id, "is_hidden": hidden, "status": status, "reward_xp": xp}
 
 @app.put("/api/cases/{case_id}/like")
-def like_case(case_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def like_case(case_id: int, user: User = Depends(participant), db: Session = Depends(get_db)):
     case = get_case(case_id, db)
     if not db.scalar(select(Like.id).where(Like.user_id == user.id, Like.case_id == case.id)):
         try:
@@ -425,7 +475,7 @@ def like_case(case_id: int, user: User = Depends(current_user), db: Session = De
     return {"liked_by_me": True, "likes": db.scalar(select(func.count()).select_from(Like).where(Like.case_id == case.id))}
 
 @app.delete("/api/cases/{case_id}/like")
-def unlike_case(case_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def unlike_case(case_id: int, user: User = Depends(participant), db: Session = Depends(get_db)):
     get_case(case_id, db)
     db.execute(delete(Like).where(Like.user_id == user.id, Like.case_id == case_id))
     db.commit()
@@ -440,8 +490,9 @@ def notifications(before_id: int | None = Query(default=None, ge=1), user: User 
     items = []
     for row in rows:
         actor, case = db.get(User, row.actor_id), db.get(Case, row.case_id)
-        items.append({"id": row.id, "kind": row.kind, "actor": public_user(actor), "case_id": case.id,
-                      "case_title": case.title, "is_read": bool(row.is_read), "created_at": row.created_at})
+        actor_data = public_user(actor) if actor.account_status=="active" else {"id":actor.id,"username":"account-paused","display_name":"Tài khoản đã dừng","avatar_url":None}
+        items.append({"id": row.id, "kind": row.kind, "actor": actor_data, "case_id": case.id,
+                      "case_title": case.title if db.get(User,case.creator_id).account_status=="active" else "Bài không còn hiển thị", "is_read": bool(row.is_read), "created_at": row.created_at})
     return {"items": items, "unread_count": db.scalar(select(func.count()).select_from(Notification).where(Notification.recipient_id == user.id, Notification.is_read == 0)),
             "next_before_id": rows[-1].id if len(rows) == 30 else None}
 
@@ -465,4 +516,6 @@ def read_notification(notification_id: int, user: User = Depends(current_user), 
 
 @app.get("/api/leaderboard")
 def leaderboard(db: Session = Depends(get_db)):
-    return [public_user(u) for u in db.scalars(select(User).order_by(User.total_xp.desc(), User.id).limit(20))]
+    return [public_user(u) for u in db.scalars(select(User).where(User.account_status=="active").order_by(User.total_xp.desc(), User.id).limit(20))]
+
+app.include_router(build_router(current_user,password_hash))

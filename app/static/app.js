@@ -24,19 +24,21 @@ loginInput.removeAttribute('pattern'); loginInput.maxLength = 254;
 loginInput.placeholder = 'Tên đăng nhập, email hoặc số điện thoại';
 document.body.insertAdjacentHTML('beforeend', '<dialog id="profile-dialog"><button class="close" aria-label="Đóng">×</button><p class="eyebrow">HỒ SƠ CỦA BẠN</p><h2>Thông tin cá nhân</h2><form id="profile-form"><label>Tên hiển thị<input name="display_name" maxlength="80" autocomplete="nickname"></label><label>Giới thiệu<textarea name="bio" maxlength="500"></textarea></label><label>Email<input name="email" type="email" maxlength="254" autocomplete="email"></label><label>Số điện thoại<input name="phone" type="tel" maxlength="40" autocomplete="tel"></label><p class="muted">Email và số điện thoại chỉ bạn thấy, chưa được xác minh. Giữ ít nhất một thông tin liên hệ.</p><button class="primary" type="submit">Lưu thông tin</button></form><button class="text-button" id="logout">Đăng xuất</button></dialog>');
 $('#profile-form').insertAdjacentHTML('beforebegin', '<section class="avatar-editor" aria-label="Ảnh đại diện"><span class="avatar self-avatar profile-avatar">J</span><div><strong>Ảnh đại diện của bạn</strong><p>Ảnh được cắt vuông và lưu ngay khi tải lên.</p><div class="avatar-actions"><button type="button" id="avatar-choose">Chọn ảnh mới</button><button type="button" id="avatar-remove" hidden>Xóa ảnh</button></div><input type="file" id="avatar-file" accept="image/jpeg,image/png,image/webp" aria-label="Chọn ảnh đại diện" hidden><p id="avatar-status" role="status" aria-live="polite"></p></div></section>');
-$('#avatar-choose').onclick = () => $('#avatar-file').click();
+$('#avatar-choose').onclick = () => { if (!$('#avatar-rights')?.checked) { toast('Hãy xác nhận quyền sử dụng ảnh đại diện trước.','error'); return; } $('#avatar-file').click(); };
 async function updateAvatar(remove = false) {
   const input = $('#avatar-file'), file = input.files[0];
   if (!remove && !file) return;
+  if (!remove && !$('#avatar-rights')?.checked) { toast('Cần xác nhận quyền sử dụng ảnh đại diện.','error'); input.value=''; return; }
   $('#avatar-choose').disabled = $('#avatar-remove').disabled = true;
   $('#avatar-status').textContent = remove ? 'Đang xóa ảnh…' : 'Đang tải ảnh đại diện…';
   try {
     if (file && !remove && file.size > 8 * 1024 * 1024) throw new Error('Ảnh đại diện tối đa 8 MB.');
-    const body = new FormData(); if (!remove) body.append('file',file);
+    const body = new FormData(); if (!remove) { body.append('file',file); body.append('rights_confirmed','true'); }
     user = await api('/me/avatar', remove ? {method:'DELETE'} : {method:'POST',body});
     renderUser(); loadHunters(); loadFeed();
     $('#avatar-status').textContent = remove ? 'Đã xóa ảnh đại diện.' : 'Đã lưu ảnh đại diện mới.';
     toast($('#avatar-status').textContent);
+    if ($('#avatar-rights')) $('#avatar-rights').checked=false;
   } catch (error) { $('#avatar-status').textContent = error.message; toast(error.message,'error'); }
   finally { input.value = ''; $('#avatar-choose').disabled = $('#avatar-remove').disabled = false; }
 }
@@ -49,7 +51,7 @@ function hideToast() { if (typeof notification.hidePopover === 'function' && not
 $('#notice-close').onclick = hideToast;
 function toast(message, kind = 'success') {
   clearTimeout(toastTimer); notification.hidden = false; notification.dataset.kind = kind;
-  const host = document.querySelector('dialog[open]') || document.body;
+  const host = document.activeElement?.closest('dialog[open]') || [...document.querySelectorAll('dialog[open]')].at(-1) || document.body;
   if (notification.parentElement !== host) { if (typeof notification.hidePopover === 'function' && notification.matches(':popover-open')) notification.hidePopover(); host.append(notification); }
   $('#notice-title').textContent = kind === 'error' ? 'Chưa thực hiện được' : 'Thông báo';
   $('#notice-message').textContent = message; $('.notice-icon').textContent = kind === 'error' ? '!' : '✓';
@@ -91,12 +93,15 @@ function renderUser() {
   if ($('#avatar-remove')) $('#avatar-remove').hidden = !user?.avatar_url;
   if (!user) { $('#unread-count').hidden = true; $('#notifications-list').innerHTML = ''; inboxNext = null; inboxThroughId = 0; }
   else refreshInbox();
+  document.querySelectorAll('#create-form .location-picker').forEach(picker => { if (user?.guardian_managed) picker.querySelector('.clear-location').click(); picker.hidden=Boolean(user?.guardian_managed); });
+  if (user?.needs_legal_consent && typeof openConsentDialog==='function') openConsentDialog();
 }
 async function refreshUser() { if (token) { try { user = await api('/me'); } catch {} } renderUser(); }
-function requireLogin() { if (user) return true; $('#auth-dialog').showModal(); return false; }
+function requireLogin() { if (user) { if (user.needs_legal_consent) { if (typeof openConsentDialog==='function') openConsentDialog(); else toast('Cần xác nhận điều khoản và độ tuổi trong tài khoản.','error'); return false; } return true; } $('#auth-dialog').showModal(); return false; }
 async function busy(form, task) { if (form.dataset.locating === 'true') { formMessage(form,'Đang lấy vị trí, vui lòng chờ hoặc bấm Hủy.'); return; } const button = form.querySelector('[type="submit"]'); button.disabled = true; formMessage(form,''); try { await task(); } catch (error) { formMessage(form,error.message); toast(error.message,'error'); } finally { button.disabled = false; } }
 const locationRequests = new WeakMap();
 function locationMarkup(forGuess = false) {
+  if (forGuess && user?.guardian_managed) return '<p class="muted">Tài khoản được người đại diện quản lý dự đoán bằng tên, chưa dùng GPS.</p>';
   return `<section class="location-picker"><h3>${forGuess ? 'Hoặc xác nhận bằng vị trí của bạn' : 'Vị trí địa điểm trong ảnh (tùy chọn)'}</h3><p class="muted">${forGuess ? 'Nếu bạn đang ở nơi trong ảnh, dùng vị trí máy để gửi dự đoán.' : 'Chỉ lấy vị trí máy khi bạn đang ở đúng nơi chụp ảnh. Bạn vẫn đăng được bằng đáp án tên địa danh.'}</p><input type="hidden" name="latitude"><input type="hidden" name="longitude"><div class="location-actions"><button type="button" class="locate-button">${icon('pin')} Lấy vị trí hiện tại</button><button type="button" class="clear-location" hidden>Bỏ vị trí</button></div><p class="location-status" role="status" aria-live="polite">Chưa đính kèm vị trí.</p></section>`;
 }
 function bindLocation(form) {
@@ -215,7 +220,7 @@ async function openCase(id, discussion = false) {
     if (discussion) { $('#comment-form textarea').focus(); $('#comment-form').scrollIntoView({block:'nearest'}); }
   } catch (error) { toast(error.message,'error'); }
 }
-document.querySelectorAll('dialog').forEach(dialog => {
+function setupDialog(dialog) {
   const close = dialog.querySelector('.close'); close.textContent = 'Đóng ×'; close.type = 'button';
   const top = document.createElement('div'); top.className = 'dialog-top'; close.before(top); top.append(close);
   close.onclick = () => dialog.close();
@@ -232,7 +237,8 @@ document.querySelectorAll('dialog').forEach(dialog => {
       if (visible && typeof notification.showPopover === 'function') notification.showPopover();
     }
   });
-});
+}
+document.querySelectorAll('dialog').forEach(setupDialog);
 $('#explore').onclick = () => { page = 'explore'; loadFeed(); };
 $('#ranking').onclick = () => { page = 'ranking'; loadFeed(); };
 $('#create').onclick = () => { if (requireLogin()) $('#create-dialog').showModal(); };
@@ -246,6 +252,15 @@ $('#logout').onclick = async () => { try { await api('/auth/logout', {method:'PO
 $('#profile-form').onsubmit = event => { event.preventDefault(); const form = event.currentTarget; busy(form, async () => { const body = Object.fromEntries(new FormData(form)); if (!body.email.trim() && !body.phone.trim()) throw new Error('Cần giữ email hoặc số điện thoại.'); user = await api('/me',{method:'PATCH',body}); renderUser(); $('#profile-dialog').close(); toast('Đã cập nhật hồ sơ.'); loadFeed(); loadHunters(); }); };
 $('#auth-switch').onclick = () => { registerMode = !registerMode; $('#auth-title').textContent = registerMode ? 'Bắt đầu hành trình' : 'Chào mừng trở lại'; $('#auth-submit').textContent = registerMode ? 'Tạo tài khoản' : 'Đăng nhập'; $('#auth-switch').textContent = registerMode ? 'Đã có tài khoản? Đăng nhập' : 'Chưa có tài khoản? Đăng ký'; $('#auth-form [name=password]').autocomplete = registerMode ? 'new-password' : 'current-password'; contacts.hidden = !registerMode; contacts.querySelectorAll('input').forEach(input => input.disabled = !registerMode); if (registerMode) { loginInput.pattern = '[a-zA-Z0-9_]{3,30}'; loginInput.maxLength = 30; loginInput.placeholder = 'Không dấu, 3–30 ký tự'; } else { loginInput.removeAttribute('pattern'); loginInput.maxLength = 254; loginInput.placeholder = 'Tên đăng nhập, email hoặc số điện thoại'; } };
 contacts.querySelectorAll('input').forEach(input => input.disabled = true);
-$('#auth-form').onsubmit = event => { event.preventDefault(); const form = event.currentTarget; busy(form, async () => { const body = Object.fromEntries(new FormData(form)); if (registerMode && !body.email.trim() && !body.phone.trim()) throw new Error('Nhập email hoặc số điện thoại để đăng ký.'); const result = await api(`/auth/${registerMode ? 'register' : 'login'}`,{method:'POST',body}); token = result.token; user = result.user; sessionStorage.setItem('jinhunt-token',token); renderUser(); loadFeed(); form.reset(); $('#auth-dialog').close(); toast(`Xin chào ${user.display_name || user.username}!`); }); };
-$('#create-form').onsubmit = event => { event.preventDefault(); const form = event.currentTarget; busy(form, async () => { const f = new FormData(form), image = f.get('image'); if (image.size > 8 * 1024 * 1024) throw new Error('Ảnh tối đa 8 MB.'); if (Boolean(f.get('latitude')) !== Boolean(f.get('longitude'))) throw new Error('Cần nhập cả hai tọa độ.'); const upload = new FormData(); upload.append('file', image); const {image_url} = await api('/uploads',{method:'POST',body:upload}); const body = {title:f.get('title'),description:f.get('description'),answer:f.get('answer'),aliases:String(f.get('aliases') || '').split(/\r?\n/).map(value => value.trim()).filter(Boolean),image_url}; for (const key of ['latitude','longitude']) if (f.get(key) !== '') body[key] = Number(f.get(key)); await api('/cases',{method:'POST',body}); $('#create-dialog').close(); form.reset(); page = 'explore'; await loadFeed(); toast('Thử thách đã sẵn sàng. Để mọi người khám phá nào!'); }); };
+$('#auth-form').onsubmit = event => { event.preventDefault(); const form = event.currentTarget; busy(form, async () => {
+  const body=Object.fromEntries(new FormData(form));
+  if (registerMode) {
+    Object.assign(body,await consentPayload(form));
+    if (!body.guardian_email && !String(body.email || '').trim() && !String(body.phone || '').trim()) throw new Error('Nhập email hoặc số điện thoại để đăng ký.');
+  }
+  const result=await api(`/auth/${registerMode ? 'register' : 'login'}`,{method:'POST',body});
+  if (result.status==='pending_guardian') { formMessage(form,result.message,'success'); toast(result.message); return; }
+  token=result.token; user=result.user; sessionStorage.setItem('jinhunt-token',token); form.reset(); $('#auth-dialog').close(); renderUser(); loadFeed(); toast(`Xin chào ${user.display_name || user.username}!`);
+}); };
+$('#create-form').onsubmit = event => { event.preventDefault(); const form = event.currentTarget; busy(form, async () => { const f = new FormData(form), image = f.get('image'); if (!form.elements.content_rights_confirmed.checked) throw new Error('Cần xác nhận quyền sử dụng ảnh và trách nhiệm nội dung.'); if (image.size > 8 * 1024 * 1024) throw new Error('Ảnh tối đa 8 MB.'); if (Boolean(f.get('latitude')) !== Boolean(f.get('longitude'))) throw new Error('Cần nhập cả hai tọa độ.'); const upload = new FormData(); upload.append('file', image); upload.append('rights_confirmed','true'); const {image_url} = await api('/uploads',{method:'POST',body:upload}); const body = {title:f.get('title'),description:f.get('description'),answer:f.get('answer'),aliases:String(f.get('aliases') || '').split(/\r?\n/).map(value => value.trim()).filter(Boolean),image_url,content_rights_confirmed:true}; for (const key of ['latitude','longitude']) if (f.get(key) !== '') body[key] = Number(f.get(key)); await api('/cases',{method:'POST',body}); $('#create-dialog').close(); form.reset(); page = 'explore'; await loadFeed(); toast('Thử thách đã sẵn sàng. Để mọi người khám phá nào!'); }); };
 refreshUser(); loadFeed(); loadHunters();
