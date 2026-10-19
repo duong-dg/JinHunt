@@ -138,5 +138,44 @@ def test_upgrade_preserves_legacy_data(tmp_path):
         user = db.get(User, 1)
         assert user.username == 'legacy' and user.total_xp == 250
         assert user.email is None and user.phone is None
+        assert user.avatar_url is None
     assert 'external_identities' in inspect(engine).get_table_names()
     engine.dispose()
+
+def test_avatar_upload_display_name_and_comment_identity(client):
+    owner, player = account(client, 'owner'), account(client, 'player')
+    case = create_case(client, owner)
+    image = Image.new('RGB', (900, 450), 'blue')
+    stream = io.BytesIO()
+    exif = Image.Exif()
+    exif[270] = 'Private image metadata'
+    image.save(stream, 'JPEG', exif=exif)
+    files = {'file': ('my-location.jpg', stream.getvalue(), 'image/jpeg')}
+    assert client.post('/api/me/avatar', files=files).status_code == 401
+    assert client.delete('/api/me/avatar').status_code == 401
+    assert client.post('/api/me/avatar', headers=player, files={'file': ('bad.jpg', b'bad', 'image/jpeg')}).status_code == 400
+    uploaded = client.post('/api/me/avatar', headers=player, files=files)
+    assert uploaded.status_code == 200
+    avatar_url = uploaded.json()['avatar_url']
+    assert avatar_url.startswith('/uploads/avatar-')
+    clean = Image.open(io.BytesIO(client.get(avatar_url).content))
+    assert clean.size == (512, 512) and not clean.getexif()
+    assert client.get('/api/me', headers=owner).json()['avatar_url'] is None
+    assert client.patch('/api/me', headers=player, json={'avatar_url':'https://example.com/track.jpg'}).status_code == 422
+    assert client.post('/api/cases', headers=player, json={'title':'Somewhere', 'answer':'A place', 'image_url':avatar_url}).status_code == 400
+    client.patch('/api/me', headers=player, json={'display_name':'Người thích khám phá'})
+    path = f'/api/cases/{case["id"]}/comments'
+    client.post(path, headers=player, json={'content':'Góc ảnh đẹp!'})
+    comment = client.get(path).json()[0]
+    assert comment['display_name'] == 'Người thích khám phá'
+    assert comment['avatar_url'] == avatar_url
+    assert 'email' not in comment and 'phone' not in comment
+    client.patch('/api/me', headers=player, json={'display_name':''})
+    assert client.get(path).json()[0]['display_name'] == 'player'
+    client.patch('/api/me', headers=owner, json={'display_name':'Chủ thử thách'})
+    public_case = client.get(f'/api/cases/{case["id"]}').json()
+    assert public_case['creator_display_name'] == 'Chủ thử thách'
+    assert public_case['creator'] == 'owner'
+    assert 'email' not in public_case and 'phone' not in public_case
+    assert client.delete('/api/me/avatar', headers=player).json()['avatar_url'] is None
+    assert client.get(path).json()[0]['avatar_url'] is None

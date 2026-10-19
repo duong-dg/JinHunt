@@ -43,7 +43,8 @@ def normalize(value):
 
 def public_user(user):
     return {"id": user.id, "username": user.username, "display_name": user.display_name or user.username,
-            "bio": user.bio or "", "xp": user.total_xp, "level": user.total_xp // 200 + 1}
+            "bio": user.bio or "", "avatar_url": user.avatar_url,
+            "xp": user.total_xp, "level": user.total_xp // 200 + 1}
 
 def private_user(user):
     return {**public_user(user), "email": user.email, "phone": user.phone,
@@ -183,8 +184,7 @@ def edit_profile(data: ProfileUpdate, user: User = Depends(current_user), db: Se
     db.refresh(user)
     return private_user(user)
 
-@app.post("/api/uploads", status_code=201)
-async def upload(file: UploadFile = File(), user: User = Depends(current_user)):
+async def save_image(file, user, avatar=False):
     data = await file.read(8 * 1024 * 1024 + 1)
     await file.close()
     if len(data) > 8 * 1024 * 1024:
@@ -195,13 +195,33 @@ async def upload(file: UploadFile = File(), user: User = Depends(current_user)):
             with Image.open(io.BytesIO(data)) as source:
                 source.load()
                 clean = ImageOps.exif_transpose(source).convert("RGB")
-                clean.thumbnail((1920, 1920))
-                filename = f"{user.id}-{secrets.token_hex(16)}.jpg"
+                if avatar:
+                    clean = ImageOps.fit(clean, (512, 512), method=Image.Resampling.LANCZOS)
+                else:
+                    clean.thumbnail((1920, 1920))
+                filename = f"{'avatar-' if avatar else ''}{user.id}-{secrets.token_hex(16)}.jpg"
                 # Re-encode pixels only: no EXIF, GPS, original filename or metadata.
                 clean.save(UPLOAD_DIR / filename, "JPEG", quality=88)
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
         raise HTTPException(400, "File ảnh không hợp lệ. Hãy dùng JPEG, PNG hoặc WebP.")
-    return {"image_url": f"/uploads/{filename}"}
+    return f"/uploads/{filename}"
+
+@app.post("/api/uploads", status_code=201)
+async def upload(file: UploadFile = File(), user: User = Depends(current_user)):
+    return {"image_url": await save_image(file, user)}
+
+@app.post("/api/me/avatar")
+async def upload_avatar(file: UploadFile = File(), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    user.avatar_url = await save_image(file, user, avatar=True)
+    db.commit()
+    db.refresh(user)
+    return private_user(user)
+
+@app.delete("/api/me/avatar")
+def remove_avatar(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    user.avatar_url = None
+    db.commit()
+    return private_user(user)
 
 class CaseCreate(BaseModel):
     title: str = Field(min_length=3, max_length=100)
@@ -230,6 +250,7 @@ def public_case(case, db):
     creator = db.get(User, case.creator_id)
     return {"id": case.id, "title": case.title, "description": case.description,
             "image_url": case.image_url, "creator": creator.username, "creator_id": creator.id,
+            "creator_display_name": creator.display_name or creator.username, "creator_avatar_url": creator.avatar_url,
             "reward_xp": case.reward_xp, "has_coordinates": case.latitude is not None,
             "solves": db.scalar(select(func.count()).select_from(Solve).where(Solve.case_id == case.id)),
             "created_at": case.created_at}
@@ -295,9 +316,14 @@ class CommentCreate(BaseModel):
 def comments(case_id: int, db: Session = Depends(get_db)):
     get_case(case_id, db)
     rows = db.scalars(select(Comment).where(Comment.case_id == case_id).order_by(Comment.id.desc()).limit(100))
-    return [{"id": c.id, "username": db.get(User, c.user_id).username,
+    result = []
+    for c in rows:
+        author = db.get(User, c.user_id)
+        result.append({"id": c.id, "username": author.username,
+             "display_name": author.display_name or author.username, "avatar_url": author.avatar_url,
              "content": "Đã ẩn nội dung có đáp án." if c.is_hidden else c.content,
-             "is_hidden": bool(c.is_hidden), "created_at": c.created_at} for c in rows]
+             "is_hidden": bool(c.is_hidden), "created_at": c.created_at})
+    return result
 
 @app.post("/api/cases/{case_id}/comments", status_code=201)
 def comment(case_id: int, data: CommentCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):

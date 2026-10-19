@@ -10,6 +10,7 @@ class User(Base):
     total_xp = Column(Integer, default=0, nullable=False)
     display_name = Column(String(80), nullable=True)
     bio = Column(String(500), nullable=True)
+    avatar_url = Column(String(255), nullable=True)
     email = Column(String(254), unique=True, nullable=True)
     phone = Column(String(20), unique=True, nullable=True)
 

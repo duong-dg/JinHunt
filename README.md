@@ -8,6 +8,10 @@ Form đăng ảnh và dự đoán có nút **Lấy vị trí hiện tại**, kh�
 
 Cửa sổ có nút Đóng lớn, hỗ trợ Escape và bấm nền bên ngoài để đóng. Đóng cửa sổ không tự gửi hay lưu form; dữ liệu đang nhập được giữ trong cửa sổ của tab để có thể mở lại. Chữ ô nhập 16px; palette cyan–aqua với nền kem nhẹ.
 
+Trong Hồ sơ, chọn ảnh đại diện để tải lên và lưu ngay, hoặc Xóa ảnh để trở về chữ cái mặc định. Avatar tối đa 8 MB, tự cắt vuông 512×512 và xóa metadata. Avatar xuất hiện trên feed, bình luận và bảng xếp hạng; tên hiển thị được ưu tiên, thiếu thì dùng username. API ảnh đại diện: `POST /api/me/avatar` (multipart `file`) và `DELETE /api/me/avatar`; đều yêu cầu token. Cột avatar được tự thêm vào database khi khởi động. Ảnh đã thay/xóa khỏi hồ sơ vẫn còn file trong storage; chưa có tác vụ dọn file không còn dùng.
+
+Thông báo dùng Popover API để nổi trên cả cửa sổ modal, có nút đóng riêng. Lỗi màu cam đỏ giữ 12 giây, thông báo khác 7 giây; lỗi thao tác form còn hiển thị ngay trước nút gửi để đọc lại. Nút chính dùng gradient xanh ngọc–xanh biển, điểm XP vàng nhẹ.
+
 ## Chạy bằng Docker
 
 ```sh
