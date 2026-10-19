@@ -2,7 +2,7 @@
 
 Ứng dụng đoán địa điểm qua ảnh. MVP gồm FastAPI và giao diện web responsive tiếng Việt, dùng chung API cho client iOS/Android tương lai.
 
-Trang chủ hiển thị feed ảnh lớn, thanh điều hướng bên trái và hồ sơ/XP/bảng xếp hạng ở bên phải trên desktop. Tablet thu gọn bố cục; điện thoại dùng thanh điều hướng dưới cùng. Mỗi bài có nút đoán địa điểm và mở phần trao đổi. Feed tải 12 bài mỗi lượt, có nút xem thêm. Chưa có tính năng theo dõi, thả tim hoặc nhắn tin.
+Trang chủ hiển thị feed ảnh lớn, thanh điều hướng bên trái và hồ sơ/XP/bảng xếp hạng ở bên phải trên desktop. Tablet thu gọn bố cục; điện thoại dùng thanh điều hướng dưới cùng. Mỗi bài có nút thả tim và mở phần bình luận/dự đoán. Feed tải 12 bài mỗi lượt, có nút xem thêm. Chưa có tính năng theo dõi hoặc nhắn tin.
 
 Form đăng ảnh và dự đoán có nút **Lấy vị trí hiện tại**, không cần nhập vĩ độ/kinh độ. Trình duyệt chỉ xin quyền định vị sau khi bấm nút. Dùng vị trí máy khi đang ở đúng địa điểm trong ảnh; ảnh chụp nơi khác có thể chỉ dùng đáp án tên. Có thể bỏ vị trí, hủy đang lấy hoặc thử lại khi bị từ chối quyền/GPS kém. Sai số trên 150 m không được đính kèm. Vị trí chỉ gửi cùng thao tác đăng bài/dự đoán, không hiện trên feed. GPS trên web cần **HTTPS** (ngoại lệ localhost khi phát triển); HTTP qua IP server không dùng được định vị. Đây không phải bằng chứng chống giả GPS.
 
@@ -11,6 +11,18 @@ Cửa sổ có nút Đóng lớn, hỗ trợ Escape và bấm nền bên ngoài 
 Trong Hồ sơ, chọn ảnh đại diện để tải lên và lưu ngay, hoặc Xóa ảnh để trở về chữ cái mặc định. Avatar tối đa 8 MB, tự cắt vuông 512×512 và xóa metadata. Avatar xuất hiện trên feed, bình luận và bảng xếp hạng; tên hiển thị được ưu tiên, thiếu thì dùng username. API ảnh đại diện: `POST /api/me/avatar` (multipart `file`) và `DELETE /api/me/avatar`; đều yêu cầu token. Cột avatar được tự thêm vào database khi khởi động. Ảnh đã thay/xóa khỏi hồ sơ vẫn còn file trong storage; chưa có tác vụ dọn file không còn dùng.
 
 Thông báo dùng Popover API để nổi trên cả cửa sổ modal, có nút đóng riêng. Lỗi màu cam đỏ giữ 12 giây, thông báo khác 7 giây; lỗi thao tác form còn hiển thị ngay trước nút gửi để đọc lại. Nút chính dùng gradient xanh ngọc–xanh biển, điểm XP vàng nhẹ.
+
+## Tim bài, chuông thông báo và bình luận/dự đoán
+
+- Một ô **Bình luận hoặc đoán địa điểm** cho trao đổi và đoán tên. Câu chứa nguyên cụm tên đáp án hoặc một tên gọi khác được chấp nhận sẽ được che; hệ thống bỏ qua hoa/thường, dấu tiếng Việt và dấu câu, có ranh giới từ (không khớp một phần của từ dài hơn). Ví dụ đáp án `Chợ Bến Thành`: `Mình nghĩ đây là cho ben thanh!` được chấm đúng; `Bến Thành` chỉ được chấp nhận nếu người đăng thêm tên đó vào danh sách thay thế.
+- Khi tạo bài có thể nhập tối đa 10 tên gọi khác, mỗi dòng một tên. Các tên này không trả ra API công khai. Không dùng so khớp gần đúng/lỗi chính tả; chỉ chặn một số mẫu phủ định đơn giản như `không phải ...`, chưa hiểu ngữ nghĩa câu nói. Nội dung có đáp án vẫn được che dù không được cộng XP. Người đăng tự nhắc đáp án cũng bị che và không nhận XP.
+- Đoán đúng nhận XP một lần trên mỗi bài, dùng chung với API dự đoán cũ. Sai tên được giữ như bình luận công khai. Dự đoán GPS trong cùng form luôn bị che và không lưu tọa độ gửi lên trong nội dung bình luận. Bình luận và dự đoán dùng chung giới hạn 10 lượt/phút/tài khoản.
+- Tim bài dùng `PUT /api/cases/{id}/like` và `DELETE /api/cases/{id}/like`, mỗi tài khoản một tim, không cộng XP. Feed trả `likes`, `liked_by_me`, `comments`; khách chưa đăng nhập vẫn xem được.
+- Chủ bài nhận thông báo khi có người khác bình luận, thả tim hoặc giải đúng. Không tự thông báo cho chính mình, không đưa nguyên văn bình luận/đáp án/tọa độ vào thông báo. Bỏ tim rồi thả lại không tạo thêm thông báo tim để tránh làm phiền. Lần giải đúng đầu tiên tạo thông báo giải đúng, thay cho thông báo bình luận cùng lượt đó.
+- Nút chuông có số chưa đọc; bấm thông báo mở bài. Có đọc từng mục, đọc tất cả, làm mới và tải cũ hơn. API `GET /api/notifications` phân trang 30 mục bằng `before_id`; chỉ người nhận xem/đánh dấu được. `POST /api/notifications/read` nhận `through_id`, chỉ đánh dấu những mục đến ID đó để không làm mất thông báo mới đến.
+- Thông báo trong app được kiểm tra mỗi 30 giây khi tab hiển thị, tải lại khi mở chuông/quay lại tab. Chưa có WebSocket, email hay push notification khi đóng app.
+
+Bản nâng cấp tự tạo các bảng `likes`, `notifications`, `answer_aliases`; không xóa dữ liệu hiện có. Sao lưu database trước khi `git pull --ff-only` và `docker compose up -d --build`.
 
 ## Chạy bằng Docker
 

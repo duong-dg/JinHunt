@@ -16,11 +16,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, update, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
-from .models import User, Token, Case, Solve, Comment, Attempt
+from .models import User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias
 from .migrations import upgrade
 
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
@@ -56,6 +56,57 @@ def current_user(authorization: str = Header(default=""), db: Session = Depends(
     if not authorization.startswith("Bearer ") or not token or token.expires_at < time.time():
         raise HTTPException(401, "Vui lòng đăng nhập lại.")
     return db.get(User, token.user_id)
+
+def optional_user(authorization: str = Header(default=""), db: Session = Depends(get_db)):
+    return current_user(authorization, db) if authorization else None
+
+def notify(db, case, actor, kind, source_id=None):
+    if case.creator_id == actor.id:
+        return
+    key = f"comment:{source_id}" if kind == "comment" else f"{kind}:{case.id}:{actor.id}"
+    existing = db.scalar(select(Notification).where(Notification.event_key == key))
+    # Retries and repeated unlike/like cycles do not flood the inbox.
+    if not existing:
+        try:
+            with db.begin_nested():
+                db.add(Notification(recipient_id=case.creator_id, actor_id=actor.id, case_id=case.id, kind=kind, event_key=key))
+                db.flush()
+        except IntegrityError:
+            pass
+
+def answer_matches(db, case, text):
+    normalized = normalize(text)
+    answers = [case.answer, *db.scalars(select(AnswerAlias.answer).where(AnswerAlias.case_id == case.id))]
+    hidden = correct = False
+    for answer in answers:
+        phrase = normalize(answer)
+        for match in re.finditer(r"(?<!\S)" + re.escape(phrase) + r"(?!\S)", normalized):
+            hidden = True
+            prefix = normalized[:match.start()].strip()
+            if not re.search(r"(?:khong phai|khong la|chang phai|chua chac|khong chac)(?: \w+){0,3}$", prefix):
+                correct = True
+    return hidden, correct
+
+def limit_attempt(db, user, case_id):
+    recent = db.scalar(select(func.count()).select_from(Attempt).where(Attempt.user_id == user.id, Attempt.created_at > time.time() - 60))
+    if recent >= 10:
+        raise HTTPException(429, "Bạn đã gửi 10 lượt trong một phút. Hãy chờ một chút.")
+    db.add(Attempt(user_id=user.id, case_id=case_id, created_at=time.time()))
+
+def award_solve(db, case, user):
+    if case.creator_id == user.id:
+        return "author", 0
+    if db.scalar(select(Solve).where(Solve.user_id == user.id, Solve.case_id == case.id)):
+        return "already_solved", 0
+    try:
+        with db.begin_nested():
+            db.add(Solve(user_id=user.id, case_id=case.id))
+            db.flush()
+            db.execute(update(User).where(User.id == user.id).values(total_xp=User.total_xp + case.reward_xp))
+    except IntegrityError:
+        return "already_solved", 0
+    notify(db, case, user, "solve")
+    return "correct", case.reward_xp
 
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=254, description="Username, email hoặc số điện thoại")
@@ -228,6 +279,7 @@ class CaseCreate(BaseModel):
     description: str = Field(default="", max_length=1000)
     image_url: str = Field(max_length=255)
     answer: str = Field(min_length=2, max_length=200)
+    aliases: list[str] = Field(default_factory=list, max_length=10)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     radius_meters: int = Field(default=150, ge=20, le=1000)
@@ -238,6 +290,8 @@ class CaseCreate(BaseModel):
             raise ValueError("Cần nhập cả vĩ độ và kinh độ.")
         if len(normalize(self.answer)) < 2 or not self.title.strip():
             raise ValueError("Tên thử thách và đáp án không hợp lệ.")
+        if any(len(alias) > 200 or len(normalize(alias)) < 2 for alias in self.aliases):
+            raise ValueError("Tên thay thế cần từ 2 đến 200 ký tự.")
         return self
 
 def get_case(case_id, db):
@@ -246,11 +300,14 @@ def get_case(case_id, db):
         raise HTTPException(404, "Không tìm thấy thử thách.")
     return case
 
-def public_case(case, db):
+def public_case(case, db, viewer=None):
     creator = db.get(User, case.creator_id)
     return {"id": case.id, "title": case.title, "description": case.description,
             "image_url": case.image_url, "creator": creator.username, "creator_id": creator.id,
             "creator_display_name": creator.display_name or creator.username, "creator_avatar_url": creator.avatar_url,
+            "likes": db.scalar(select(func.count()).select_from(Like).where(Like.case_id == case.id)),
+            "liked_by_me": bool(viewer and db.scalar(select(Like.id).where(Like.user_id == viewer.id, Like.case_id == case.id))),
+            "comments": db.scalar(select(func.count()).select_from(Comment).where(Comment.case_id == case.id)),
             "reward_xp": case.reward_xp, "has_coordinates": case.latitude is not None,
             "solves": db.scalar(select(func.count()).select_from(Solve).where(Solve.case_id == case.id)),
             "created_at": case.created_at}
@@ -260,19 +317,22 @@ def create_case(data: CaseCreate, user: User = Depends(current_user), db: Sessio
     filename = data.image_url.removeprefix("/uploads/")
     if not re.fullmatch(rf"{user.id}-[a-f0-9]{{32}}\.jpg", filename) or not (UPLOAD_DIR / filename).is_file():
         raise HTTPException(400, "Vui lòng tải ảnh của bạn lên trước.")
-    case = Case(**data.model_dump(), creator_id=user.id)
+    case = Case(**data.model_dump(exclude={"aliases"}), creator_id=user.id)
     db.add(case)
+    db.flush()
+    for answer in {normalize(alias) for alias in data.aliases} - {normalize(data.answer)}:
+        db.add(AnswerAlias(case_id=case.id, answer=answer))
     db.commit()
     db.refresh(case)
-    return public_case(case, db)
+    return public_case(case, db, user)
 
 @app.get("/api/cases")
-def list_cases(offset: int = Query(default=0, ge=0), limit: int = Query(default=24, ge=1, le=100), db: Session = Depends(get_db)):
-    return [public_case(c, db) for c in db.scalars(select(Case).order_by(Case.id.desc()).offset(offset).limit(limit))]
+def list_cases(offset: int = Query(default=0, ge=0), limit: int = Query(default=24, ge=1, le=100), db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
+    return [public_case(c, db, viewer) for c in db.scalars(select(Case).order_by(Case.id.desc()).offset(offset).limit(limit))]
 
 @app.get("/api/cases/{case_id}")
-def case_detail(case_id: int, db: Session = Depends(get_db)):
-    return public_case(get_case(case_id, db), db)
+def case_detail(case_id: int, db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
+    return public_case(get_case(case_id, db), db, viewer)
 
 class Guess(BaseModel):
     answer: str = Field(default="", max_length=200)
@@ -286,11 +346,8 @@ def guess(case_id: int, data: Guess, user: User = Depends(current_user), db: Ses
         raise HTTPException(400, "Bạn là người tạo thử thách này.")
     if db.scalar(select(Solve).where(Solve.user_id == user.id, Solve.case_id == case_id)):
         return {"status": "already_solved", "reward_xp": 0}
-    recent = db.scalar(select(func.count()).select_from(Attempt).where(Attempt.user_id == user.id, Attempt.created_at > time.time() - 60))
-    if recent >= 10:
-        raise HTTPException(429, "Bạn đã đoán 10 lần. Hãy chờ một phút.")
-    db.add(Attempt(user_id=user.id, case_id=case_id, created_at=time.time()))
-    correct = normalize(data.answer) == normalize(case.answer)
+    limit_attempt(db, user, case_id)
+    _, correct = answer_matches(db, case, data.answer)
     if data.latitude is not None and data.longitude is not None and case.latitude is not None:
         lat1, lat2 = math.radians(case.latitude), math.radians(data.latitude)
         dlat, dlon = lat2 - lat1, math.radians(data.longitude - case.longitude)
@@ -299,18 +356,22 @@ def guess(case_id: int, data: Guess, user: User = Depends(current_user), db: Ses
     if not correct:
         db.commit()
         return {"status": "incorrect", "reward_xp": 0}
-    db.add(Solve(user_id=user.id, case_id=case_id))
-    try:
-        db.flush()
-        db.execute(update(User).where(User.id == user.id).values(total_xp=User.total_xp + case.reward_xp))
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return {"status": "already_solved", "reward_xp": 0}
-    return {"status": "correct", "reward_xp": case.reward_xp}
+    status, xp = award_solve(db, case, user)
+    db.commit()
+    return {"status": status, "reward_xp": xp}
 
 class CommentCreate(BaseModel):
-    content: str = Field(min_length=1, max_length=1000)
+    content: str = Field(default="", max_length=1000)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+
+    @model_validator(mode="after")
+    def valid_submission(self):
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("Cần đủ tọa độ vị trí.")
+        if not self.content.strip() and self.latitude is None:
+            raise ValueError("Hãy nhập bình luận hoặc lấy vị trí để dự đoán.")
+        return self
 
 @app.get("/api/cases/{case_id}/comments")
 def comments(case_id: int, db: Session = Depends(get_db)):
@@ -321,20 +382,86 @@ def comments(case_id: int, db: Session = Depends(get_db)):
         author = db.get(User, c.user_id)
         result.append({"id": c.id, "username": author.username,
              "display_name": author.display_name or author.username, "avatar_url": author.avatar_url,
-             "content": "Đã ẩn nội dung có đáp án." if c.is_hidden else c.content,
+             "content": "Đã ẩn nội dung dự đoán." if c.is_hidden else c.content,
              "is_hidden": bool(c.is_hidden), "created_at": c.created_at})
     return result
 
 @app.post("/api/cases/{case_id}/comments", status_code=201)
 def comment(case_id: int, data: CommentCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
     case = get_case(case_id, db)
+    limit_attempt(db, user, case_id)
     content = data.content.strip()
-    if not content:
-        raise HTTPException(400, "Bình luận không được để trống.")
-    hidden = f" {normalize(case.answer)} " in f" {normalize(content)} "
-    db.add(Comment(case_id=case_id, user_id=user.id, content=content, is_hidden=int(hidden)))
+    hidden, correct = answer_matches(db, case, content)
+    if data.latitude is not None:
+        if case.latitude is None:
+            raise HTTPException(400, "Thử thách này chỉ nhận tên địa danh.")
+        lat1, lat2 = math.radians(case.latitude), math.radians(data.latitude)
+        a = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(math.radians(data.longitude - case.longitude) / 2) ** 2
+        correct = correct or 6371000 * 2 * math.asin(math.sqrt(min(1, a))) <= case.radius_meters
+        # Never expose coordinates or text sent alongside a GPS prediction.
+        hidden = True
+        content = "Dự đoán bằng vị trí (giữ riêng tư)."
+    status, xp = award_solve(db, case, user) if correct else ("commented", 0)
+    entry = Comment(case_id=case_id, user_id=user.id, content=content, is_hidden=int(hidden))
+    db.add(entry)
+    db.flush()
+    if status != "correct":
+        notify(db, case, user, "comment", entry.id)
     db.commit()
-    return {"is_hidden": hidden}
+    return {"id": entry.id, "is_hidden": hidden, "status": status, "reward_xp": xp}
+
+@app.put("/api/cases/{case_id}/like")
+def like_case(case_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    case = get_case(case_id, db)
+    if not db.scalar(select(Like.id).where(Like.user_id == user.id, Like.case_id == case.id)):
+        try:
+            with db.begin_nested():
+                db.add(Like(user_id=user.id, case_id=case.id))
+                db.flush()
+        except IntegrityError:
+            pass
+        notify(db, case, user, "like")
+    db.commit()
+    return {"liked_by_me": True, "likes": db.scalar(select(func.count()).select_from(Like).where(Like.case_id == case.id))}
+
+@app.delete("/api/cases/{case_id}/like")
+def unlike_case(case_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    get_case(case_id, db)
+    db.execute(delete(Like).where(Like.user_id == user.id, Like.case_id == case_id))
+    db.commit()
+    return {"liked_by_me": False, "likes": db.scalar(select(func.count()).select_from(Like).where(Like.case_id == case_id))}
+
+@app.get("/api/notifications")
+def notifications(before_id: int | None = Query(default=None, ge=1), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    query = select(Notification).where(Notification.recipient_id == user.id)
+    if before_id:
+        query = query.where(Notification.id < before_id)
+    rows = list(db.scalars(query.order_by(Notification.id.desc()).limit(30)))
+    items = []
+    for row in rows:
+        actor, case = db.get(User, row.actor_id), db.get(Case, row.case_id)
+        items.append({"id": row.id, "kind": row.kind, "actor": public_user(actor), "case_id": case.id,
+                      "case_title": case.title, "is_read": bool(row.is_read), "created_at": row.created_at})
+    return {"items": items, "unread_count": db.scalar(select(func.count()).select_from(Notification).where(Notification.recipient_id == user.id, Notification.is_read == 0)),
+            "next_before_id": rows[-1].id if len(rows) == 30 else None}
+
+class NotificationRead(BaseModel):
+    through_id: int = Field(ge=1)
+
+@app.post("/api/notifications/read")
+def read_notifications(data: NotificationRead, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    db.execute(update(Notification).where(Notification.recipient_id == user.id, Notification.id <= data.through_id).values(is_read=1))
+    db.commit()
+    return {"status": "ok"}
+
+@app.post("/api/notifications/{notification_id}/read")
+def read_notification(notification_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    entry = db.scalar(select(Notification).where(Notification.id == notification_id, Notification.recipient_id == user.id))
+    if not entry:
+        raise HTTPException(404, "Không tìm thấy thông báo.")
+    entry.is_read = 1
+    db.commit()
+    return {"status": "ok"}
 
 @app.get("/api/leaderboard")
 def leaderboard(db: Session = Depends(get_db)):

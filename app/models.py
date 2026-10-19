@@ -66,3 +66,28 @@ class Attempt(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     case_id = Column(Integer, ForeignKey("cases.id"), nullable=False)
     created_at = Column(Float, nullable=False)
+
+class AnswerAlias(Base):
+    __tablename__ = "answer_aliases"
+    __table_args__ = (UniqueConstraint("case_id", "answer"),)
+    id = Column(Integer, primary_key=True)
+    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False, index=True)
+    answer = Column(String(200), nullable=False)
+
+class Like(Base):
+    __tablename__ = "likes"
+    __table_args__ = (UniqueConstraint("user_id", "case_id"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False, index=True)
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    event_key = Column(String(100), unique=True, nullable=False)
+    id = Column(Integer, primary_key=True)
+    recipient_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False)
+    kind = Column(String(20), nullable=False)
+    is_read = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
