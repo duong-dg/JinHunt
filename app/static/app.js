@@ -35,7 +35,45 @@ function renderUser() {
 }
 async function refreshUser() { if (token) { try { user = await api('/me'); } catch {} } renderUser(); }
 function requireLogin() { if (user) return true; $('#auth-dialog').showModal(); return false; }
-async function busy(form, task) { const button = form.querySelector('[type="submit"]'); button.disabled = true; try { await task(); } catch (error) { toast(error.message); } finally { button.disabled = false; } }
+async function busy(form, task) { if (form.dataset.locating === 'true') { toast('Đang lấy vị trí, vui lòng chờ hoặc bấm Hủy.'); return; } const button = form.querySelector('[type="submit"]'); button.disabled = true; try { await task(); } catch (error) { toast(error.message); } finally { button.disabled = false; } }
+const locationRequests = new WeakMap();
+function locationMarkup(forGuess = false) {
+  return `<section class="location-picker"><h3>${forGuess ? 'Hoặc xác nhận bằng vị trí của bạn' : 'Vị trí địa điểm trong ảnh (tùy chọn)'}</h3><p class="muted">${forGuess ? 'Nếu bạn đang ở nơi trong ảnh, dùng vị trí máy để gửi dự đoán.' : 'Chỉ lấy vị trí máy khi bạn đang ở đúng nơi chụp ảnh. Bạn vẫn đăng được bằng đáp án tên địa danh.'}</p><input type="hidden" name="latitude"><input type="hidden" name="longitude"><div class="location-actions"><button type="button" class="locate-button">${icon('pin')} Lấy vị trí hiện tại</button><button type="button" class="clear-location" hidden>Bỏ vị trí</button></div><p class="location-status" role="status" aria-live="polite">Chưa đính kèm vị trí.</p></section>`;
+}
+function bindLocation(form) {
+  const picker = form.querySelector('.location-picker');
+  if (!picker) return;
+  const locate = picker.querySelector('.locate-button'), clear = picker.querySelector('.clear-location'), status = picker.querySelector('.location-status');
+  const latitude = form.elements.latitude, longitude = form.elements.longitude;
+  const invalidate = () => { locationRequests.set(form, Symbol()); form.dataset.locating = 'false'; locate.disabled = false; locate.innerHTML = `${icon('pin')} Lấy vị trí hiện tại`; };
+  const reset = () => { invalidate(); latitude.value = ''; longitude.value = ''; clear.hidden = true; clear.textContent = 'Bỏ vị trí'; status.textContent = 'Chưa đính kèm vị trí.'; };
+  clear.onclick = reset;
+  locate.onclick = () => {
+    reset();
+    if (!window.isSecureContext) { status.textContent = 'Cần mở trang bằng HTTPS để lấy vị trí. Bạn vẫn có thể dùng đáp án tên địa danh.'; return; }
+    if (!navigator.geolocation) { status.textContent = 'Trình duyệt không hỗ trợ lấy vị trí. Bạn vẫn có thể dùng tên địa danh.'; return; }
+    const request = Symbol(); locationRequests.set(form, request);
+    form.dataset.locating = 'true'; locate.disabled = true; locate.textContent = 'Đang lấy vị trí…'; clear.textContent = 'Hủy'; clear.hidden = false;
+    status.textContent = 'Hãy cho phép quyền vị trí khi trình duyệt hỏi.';
+    const active = () => locationRequests.get(form) === request && form.isConnected && form.closest('dialog').open;
+    const finish = () => { invalidate(); clear.textContent = 'Bỏ vị trí'; };
+    navigator.geolocation.getCurrentPosition(position => {
+      if (!active()) return;
+      finish();
+      const {latitude: lat, longitude: lng, accuracy} = position.coords;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(accuracy) || accuracy > 150) { clear.hidden = true; status.textContent = 'Vị trí chưa đủ chính xác. Hãy bật định vị chính xác, ra nơi thoáng rồi thử lại hoặc dùng tên địa danh.'; return; }
+      latitude.value = String(lat); longitude.value = String(lng);
+      status.textContent = `Đã lấy vị trí máy · Sai số khoảng ${Math.ceil(accuracy)} m. Chỉ dùng nếu đây là địa điểm bạn muốn chọn.`;
+    }, error => {
+      if (!active()) return;
+      finish(); clear.hidden = true;
+      status.textContent = ({1:'Bạn chưa cho phép vị trí. Mở quyền vị trí trong trình duyệt để thử lại, hoặc dùng tên địa danh.',2:'Chưa xác định được vị trí. Bật định vị trên máy rồi thử lại.',3:'Lấy vị trí quá lâu. Hãy thử lại ở nơi thoáng hơn.'})[error.code] || 'Không lấy được vị trí. Hãy thử lại hoặc dùng tên địa danh.';
+    }, {enableHighAccuracy:true, timeout:15000, maximumAge:0});
+  };
+  form.addEventListener('reset', reset);
+}
+$('#create-form details').outerHTML = locationMarkup();
+bindLocation($('#create-form'));
 async function loadFeed(append = false) {
   if (!append) feedOffset = 0;
   $('#load-more').hidden = true;
@@ -62,6 +100,7 @@ async function openCase(id, discussion = false) {
   try {
     const c = await api(`/cases/${id}`);
     $('#detail').innerHTML = `<p class="eyebrow">THỬ THÁCH #${c.id} · +${c.reward_xp} XP</p><h2>${esc(c.title)}</h2><p class="muted">Chia sẻ bởi ${esc(c.creator)} · ${c.solves} người đoán đúng</p><img class="detail-image" src="${esc(c.image_url)}" alt="Ảnh địa điểm bí ẩn"><p>${esc(c.description)}</p><form id="guess-form"><label>Địa điểm này tên gì?<input name="answer" maxlength="200" placeholder="Nhập đáp án bí mật của bạn…"></label>${c.has_coordinates ? '<details><summary>Hoặc dự đoán bằng tọa độ</summary><div class="row"><label>Vĩ độ<input name="latitude" type="number" step="any" min="-90" max="90"></label><label>Kinh độ<input name="longitude" type="number" step="any" min="-180" max="180"></label></div></details>' : ''}<button class="primary" type="submit">Gửi dự đoán ↗</button><p id="guess-result" role="status" class="muted">Đáp án chỉ gửi riêng đến hệ thống.</p></form><hr><h3>Trao đổi & gợi ý</h3><div id="comments"></div><form id="comment-form"><label>Bình luận<textarea name="content" required maxlength="1000" placeholder="Chia sẻ suy nghĩ của bạn…"></textarea></label><button class="primary" type="submit">Gửi bình luận</button><p class="muted">Bình luận chứa tên đáp án sẽ tự động được che.</p></form>`;
+    if (c.has_coordinates) { $('#guess-form details').outerHTML = locationMarkup(true); bindLocation($('#guess-form')); }
     if (!$('#detail-dialog').open) $('#detail-dialog').showModal();
     $('#guess-form').onsubmit = event => { event.preventDefault(); if (!user) { toast('Đăng nhập trước khi dự đoán.'); return; } const form = event.currentTarget; busy(form, async () => { const f = new FormData(form), body = {answer: f.get('answer')}; for (const key of ['latitude','longitude']) if (f.get(key) !== null && f.get(key) !== '') body[key] = Number(f.get(key)); if (!body.answer.trim() && !(body.latitude !== undefined && body.longitude !== undefined)) throw new Error('Nhập tên địa điểm hoặc đủ hai tọa độ.'); const result = await api(`/cases/${id}/guesses`, {method:'POST',body}); $('#guess-result').textContent = ({correct:`Chính xác! Bạn nhận +${result.reward_xp} XP.`, incorrect:'Chưa đúng rồi. Hãy xem kỹ ảnh và thử lại!', already_solved:'Bạn đã giải được thử thách này rồi.'})[result.status]; await refreshUser(); loadFeed(); }); };
     $('#comment-form').onsubmit = event => { event.preventDefault(); if (!user) { toast('Đăng nhập trước khi bình luận.'); return; } const form = event.currentTarget; busy(form, async () => { const result = await api(`/cases/${id}/comments`, {method:'POST',body:{content:new FormData(form).get('content')}}); form.reset(); await loadComments(id); if (result.is_hidden) toast('Bình luận có chứa đáp án nên đã được che.'); }); };
@@ -69,7 +108,16 @@ async function openCase(id, discussion = false) {
     if (discussion) { $('#comment-form textarea').focus(); $('#comment-form').scrollIntoView({block:'nearest'}); }
   } catch (error) { toast(error.message); }
 }
-document.querySelectorAll('.close').forEach(button => button.onclick = () => button.closest('dialog').close());
+document.querySelectorAll('dialog').forEach(dialog => {
+  const close = dialog.querySelector('.close'); close.textContent = 'Đóng ×'; close.type = 'button';
+  const top = document.createElement('div'); top.className = 'dialog-top'; close.before(top); top.append(close);
+  close.onclick = () => dialog.close();
+  let pressedOutside = false;
+  const outside = event => { const rect = dialog.getBoundingClientRect(); return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom; };
+  dialog.addEventListener('pointerdown', event => pressedOutside = event.target === dialog && outside(event));
+  dialog.addEventListener('click', event => { if (pressedOutside && event.target === dialog && outside(event)) dialog.close(); pressedOutside = false; });
+  dialog.addEventListener('close', () => dialog.querySelectorAll('form[data-locating="true"] .clear-location').forEach(button => button.click()));
+});
 $('#explore').onclick = () => { page = 'explore'; loadFeed(); };
 $('#ranking').onclick = () => { page = 'ranking'; loadFeed(); };
 $('#create').onclick = () => { if (requireLogin()) $('#create-dialog').showModal(); };

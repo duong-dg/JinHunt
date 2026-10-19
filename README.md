@@ -4,6 +4,10 @@
 
 Trang chủ hiển thị feed ảnh lớn, thanh điều hướng bên trái và hồ sơ/XP/bảng xếp hạng ở bên phải trên desktop. Tablet thu gọn bố cục; điện thoại dùng thanh điều hướng dưới cùng. Mỗi bài có nút đoán địa điểm và mở phần trao đổi. Feed tải 12 bài mỗi lượt, có nút xem thêm. Chưa có tính năng theo dõi, thả tim hoặc nhắn tin.
 
+Form đăng ảnh và dự đoán có nút **Lấy vị trí hiện tại**, không cần nhập vĩ độ/kinh độ. Trình duyệt chỉ xin quyền định vị sau khi bấm nút. Dùng vị trí máy khi đang ở đúng địa điểm trong ảnh; ảnh chụp nơi khác có thể chỉ dùng đáp án tên. Có thể bỏ vị trí, hủy đang lấy hoặc thử lại khi bị từ chối quyền/GPS kém. Sai số trên 150 m không được đính kèm. Vị trí chỉ gửi cùng thao tác đăng bài/dự đoán, không hiện trên feed. GPS trên web cần **HTTPS** (ngoại lệ localhost khi phát triển); HTTP qua IP server không dùng được định vị. Đây không phải bằng chứng chống giả GPS.
+
+Cửa sổ có nút Đóng lớn, hỗ trợ Escape và bấm nền bên ngoài để đóng. Đóng cửa sổ không tự gửi hay lưu form; dữ liệu đang nhập được giữ trong cửa sổ của tab để có thể mở lại. Chữ ô nhập 16px; palette cyan–aqua với nền kem nhẹ.
+
 ## Chạy bằng Docker
 
 ```sh
