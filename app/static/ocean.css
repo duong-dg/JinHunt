@@ -42,7 +42,7 @@ header.sidebar{background:linear-gradient(180deg,#fff,#f4fbfd);border-right-colo
 @media(min-width:1041px){
   header.sidebar{width:240px}
   .workspace{margin-left:240px;max-width:none;grid-template-columns:minmax(0,1fr) 280px;gap:36px;padding:44px 24px 30px}
-  .right-rail{position:static;width:auto;padding:24px;overflow:visible;background:linear-gradient(180deg,#fff,#f4fbfd);border-left:1px solid #dcebf0}
+  .right-rail{position:sticky;top:24px;width:auto;padding:24px;overflow:visible;background:linear-gradient(180deg,#fff,#f4fbfd);border-left:1px solid #dcebf0}
   .right-rail .journey{padding-bottom:20px}
   .right-rail .journey>.eyebrow{margin-bottom:16px}
   .right-rail .journey-user{gap:9px}
