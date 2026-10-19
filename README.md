@@ -33,7 +33,7 @@ Mặc định dùng SQLite (`jinhunt.db`), ảnh trong `uploads/`. Có thể đ�
 
 ## Luồng chơi
 
-1. Đăng ký tài khoản (username không dấu 3–30 ký tự, mật khẩu ít nhất 8 ký tự).
+1. Đăng ký tài khoản (username không dấu 3–30 ký tự, mật khẩu ít nhất 8 ký tự, email hoặc số điện thoại). Đăng nhập bằng username/email/SĐT. Số Việt Nam bắt đầu bằng 0 được chuẩn hóa sang +84; số quốc tế cần mã quốc gia.
 2. Tải ảnh, nhập tiêu đề, gợi ý và tên đáp án bí mật. Tọa độ là tùy chọn.
 3. Người khác đoán bằng tên (không phân biệt hoa/thường và dấu tiếng Việt) hoặc tọa độ trong bán kính 150 m mặc định.
 4. Đoán đúng nhận 50 XP một lần duy nhất. Người tạo không được tự giải. Mỗi 200 XP lên một level.
@@ -66,3 +66,17 @@ docker-compose.yml  API + PostgreSQL + volumes
 Schema đã thay đổi so với bản check-in ban đầu. `create_all` chỉ tạo bảng mới, không migrate bảng cũ. Không dùng trực tiếp với database cũ: sao lưu và tạo database mới, hoặc viết migration trước khi nâng cấp. Compose dùng volume `postgres_data` mới và không xóa volume `jinhunt_postgres_data` trước đây.
 
 Không commit `.env`, database, token hay ảnh người dùng. Giữ bản sao lưu riêng của các volume khi chuyển máy chủ.
+
+## Hồ sơ và nâng cấp từ MVP
+
+Nhấn tên tài khoản trên thanh đầu trang để sửa tên hiển thị, giới thiệu, email/SĐT hoặc đăng xuất. `GET /api/me` và `PATCH /api/me` yêu cầu token, chỉ trả thông tin liên hệ cho chính người dùng. Email/SĐT là duy nhất và chưa xác minh, không dùng để khôi phục mật khẩu hay tự động liên kết tài khoản xã hội. Đăng ký mới cần ít nhất một thông tin liên hệ; tài khoản cũ được giữ nguyên và bổ sung ở Hồ sơ.
+
+Bản cập nhật này tự động thêm các cột hồ sơ và bảng `external_identities` khi khởi động, áp dụng cho schema MVP trong commit `8973c8a`, không xóa dữ liệu. Chạy nâng cấp khi chỉ có một tiến trình API (Compose mặc định). Sao lưu trước khi nâng cấp; không dùng `docker compose down -v`.
+
+```sh
+git pull --ff-only
+docker compose up -d --build
+docker compose logs --tail=100 api
+```
+
+Cấu trúc danh tính ngoài có khóa duy nhất `(provider, subject)` và `(user_id, provider)` để tích hợp Google/Facebook sau. Hiện chưa có OAuth, nút đăng nhập Google/Facebook, xác nhận email hay SMS OTP. Khi tích hợp cần cấu hình app/redirect URI từ nhà cung cấp, kiểm tra token/issuer/audience/nonce/state phía server và chỉ liên kết qua phiên người dùng đã xác thực; không tự ghép bằng email chưa xác minh.

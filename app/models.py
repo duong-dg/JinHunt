@@ -8,6 +8,19 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     total_xp = Column(Integer, default=0, nullable=False)
+    display_name = Column(String(80), nullable=True)
+    bio = Column(String(500), nullable=True)
+    email = Column(String(254), unique=True, nullable=True)
+    phone = Column(String(20), unique=True, nullable=True)
+
+class ExternalIdentity(Base):
+    """Reserved for verified provider subject IDs; never link by email alone."""
+    __tablename__ = "external_identities"
+    __table_args__ = (UniqueConstraint("provider", "subject"), UniqueConstraint("user_id", "provider"))
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    provider = Column(String(30), nullable=False)
+    subject = Column(String(255), nullable=False)
 
 class Token(Base):
     __tablename__ = "tokens"

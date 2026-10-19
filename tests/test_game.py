@@ -24,7 +24,7 @@ def client():
     engine.dispose()
 
 def account(client, username):
-    r = client.post('/api/auth/register', json={'username': username, 'password': 'test-password-123'})
+    r = client.post('/api/auth/register', json={'username': username, 'password': 'test-password-123', 'email': f'{username}@example.com'})
     assert r.status_code == 201, r.text
     return {'Authorization': 'Bearer ' + r.json()['token']}
 
@@ -83,7 +83,7 @@ def test_coordinates_rate_limit_and_validation(client):
 
 def test_auth_logout_and_upload_ownership(client):
     owner, player = account(client, 'owner'), account(client, 'player')
-    assert client.post('/api/auth/register', json={'username': 'OWNER', 'password': 'test-password-123'}).status_code == 409
+    assert client.post('/api/auth/register', json={'username': 'OWNER', 'password': 'test-password-123', 'email': 'another@example.com'}).status_code == 409
     assert client.post('/api/auth/login', json={'username': 'owner', 'password': 'wrong-password'}).status_code == 401
     assert client.post('/api/auth/login', json={'username': 'owner', 'password': 'test-password-123'}).status_code == 200
     c = create_case(client, owner)
@@ -92,3 +92,51 @@ def test_auth_logout_and_upload_ownership(client):
     assert client.get('/api/me', headers=player).status_code == 401
     assert client.get('/').status_code == 200
     assert client.get('/static/app.js').status_code == 200
+
+def test_contact_registration_profile_and_privacy(client):
+    base = {'username': 'tester', 'password': 'test-password-123'}
+    assert client.post('/api/auth/register', json=base).status_code == 422
+    assert client.post('/api/auth/register', json={**base, 'email': 'bad@'}).status_code == 422
+    assert client.post('/api/auth/register', json={**base, 'phone': 'abc'}).status_code == 422
+    r = client.post('/api/auth/register', json={**base, 'phone': '090 123 4567', 'display_name': ' Người khám phá '})
+    assert r.status_code == 201
+    headers = {'Authorization': 'Bearer ' + r.json()['token']}
+    assert r.json()['user']['phone'] == '+84901234567'
+    assert r.json()['user']['display_name'] == 'Người khám phá'
+    for identifier in ['0901234567', '+84901234567', 'tester']:
+        assert client.post('/api/auth/login', json={'username': identifier, 'password': base['password']}).status_code == 200
+    assert client.patch('/api/me', json={'bio': 'hi'}).status_code == 401
+    assert client.patch('/api/me', headers=headers, json={'phone': ''}).status_code == 400
+    assert client.patch('/api/me', headers=headers, json={'xp': 9000}).status_code == 422
+    result = client.patch('/api/me', headers=headers, json={'email': ' TESTER@EXAMPLE.COM ', 'bio': ' Thích khám phá ', 'phone': None})
+    assert result.status_code == 200
+    assert result.json()['email'] == 'tester@example.com'
+    assert result.json()['bio'] == 'Thích khám phá'
+    assert result.json()['phone'] is None
+    assert result.json()['contact_verified'] is False
+    assert client.post('/api/auth/login', json={'username': 'TESTER@example.com', 'password': base['password']}).status_code == 200
+    other = account(client, 'other')
+    assert client.patch('/api/me', headers=other, json={'email': 'tester@example.com'}).status_code == 409
+    assert client.get('/api/me', headers=other).json()['email'] == 'other@example.com'
+    assert client.post('/api/auth/register', json={**base, 'username': 'newuser', 'email': 'Tester@example.com'}).status_code == 409
+    board = client.get('/api/leaderboard').json()
+    assert all('email' not in u and 'phone' not in u and 'contact_verified' not in u for u in board)
+
+def test_upgrade_preserves_legacy_data(tmp_path):
+    from sqlalchemy import text, inspect
+    from app.migrations import upgrade
+    from app.models import User
+    from app.main import password_hash
+    from sqlalchemy.orm import Session
+    engine = create_engine(f'sqlite:///{tmp_path / "legacy.db"}')
+    with engine.begin() as connection:
+        connection.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, username VARCHAR(50) UNIQUE NOT NULL, password_hash VARCHAR(255) NOT NULL, total_xp INTEGER NOT NULL)'))
+        connection.execute(text('INSERT INTO users VALUES (1, :name, :password, 250)'), {'name': 'legacy', 'password': password_hash('legacy-password')})
+    upgrade(engine)
+    upgrade(engine)
+    with Session(engine) as db:
+        user = db.get(User, 1)
+        assert user.username == 'legacy' and user.total_xp == 250
+        assert user.email is None and user.phone is None
+    assert 'external_identities' in inspect(engine).get_table_names()
+    engine.dispose()

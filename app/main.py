@@ -15,12 +15,13 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, Q
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
 from sqlalchemy import select, func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
 from .models import User, Token, Case, Solve, Comment, Attempt
+from .migrations import upgrade
 
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -28,7 +29,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 @asynccontextmanager
 async def lifespan(app):
-    Base.metadata.create_all(engine)
+    upgrade(engine)
     yield
 
 app = FastAPI(title="JinHunt API", version="0.1.0", lifespan=lifespan)
@@ -41,7 +42,12 @@ def normalize(value):
     return " ".join(re.findall(r"[a-z0-9]+", value))
 
 def public_user(user):
-    return {"id": user.id, "username": user.username, "xp": user.total_xp, "level": user.total_xp // 200 + 1}
+    return {"id": user.id, "username": user.username, "display_name": user.display_name or user.username,
+            "bio": user.bio or "", "xp": user.total_xp, "level": user.total_xp // 200 + 1}
+
+def private_user(user):
+    return {**public_user(user), "email": user.email, "phone": user.phone,
+            "contact_verified": False}
 
 def current_user(authorization: str = Header(default=""), db: Session = Depends(get_db)):
     raw = authorization.removeprefix("Bearer ")
@@ -51,8 +57,54 @@ def current_user(authorization: str = Header(default=""), db: Session = Depends(
     return db.get(User, token.user_id)
 
 class Credentials(BaseModel):
+    username: str = Field(min_length=3, max_length=254, description="Username, email hoặc số điện thoại")
+    password: str = Field(min_length=8, max_length=128)
+
+def clean_email(value):
+    value = value.strip().lower() if value else None
+    if value and (len(value) > 254 or not re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,63}", value)):
+        raise ValueError("Email không hợp lệ.")
+    return value or None
+
+def clean_phone(value):
+    value = re.sub(r"[\s().-]", "", value or "")
+    if value.startswith("0"):
+        value = "+84" + value[1:]
+    if value and not re.fullmatch(r"\+[1-9][0-9]{7,14}", value):
+        raise ValueError("Số điện thoại cần mã quốc gia, ví dụ +84901234567 hoặc 0901234567.")
+    return value or None
+
+class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: str | None = Field(default=None, max_length=80)
+    bio: str | None = Field(default=None, max_length=500)
+    email: str | None = Field(default=None, max_length=254)
+    phone: str | None = Field(default=None, max_length=40)
+
+    @field_validator("email")
+    @classmethod
+    def email_valid(cls, value):
+        return clean_email(value)
+
+    @field_validator("phone")
+    @classmethod
+    def phone_valid(cls, value):
+        return clean_phone(value)
+
+    @field_validator("display_name", "bio")
+    @classmethod
+    def trim_text(cls, value):
+        return value.strip() if value else None
+
+class Registration(ProfileUpdate):
     username: str = Field(pattern=r"^[a-zA-Z0-9_]{3,30}$")
     password: str = Field(min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def require_contact(self):
+        if not self.email and not self.phone:
+            raise ValueError("Cần cung cấp email hoặc số điện thoại.")
+        return self
 
 def password_hash(password, salt=None):
     salt = salt or secrets.token_hex(16)
@@ -63,7 +115,7 @@ def session_response(user, db):
     raw = secrets.token_urlsafe(32)
     db.add(Token(token_hash=hashlib.sha256(raw.encode()).hexdigest(), user_id=user.id, expires_at=time.time() + 86400 * 7))
     db.commit()
-    return {"token": raw, "user": public_user(user)}
+    return {"token": raw, "user": private_user(user)}
 
 @app.get("/", include_in_schema=False)
 def home():
@@ -75,19 +127,32 @@ def health(db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 @app.post("/api/auth/register", status_code=201)
-def register(data: Credentials, db: Session = Depends(get_db)):
-    user = User(username=data.username.lower(), password_hash=password_hash(data.password))
+def register(data: Registration, db: Session = Depends(get_db)):
+    user = User(username=data.username.lower(), password_hash=password_hash(data.password),
+                email=data.email, phone=data.phone, display_name=data.display_name, bio=data.bio)
     db.add(user)
     try:
         db.flush()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(409, "Tên người dùng đã tồn tại.")
+        raise HTTPException(409, "Tên người dùng hoặc thông tin liên hệ đã được sử dụng.")
     return session_response(user, db)
 
 @app.post("/api/auth/login")
 def login(data: Credentials, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.username == data.username.lower()))
+    identifier = data.username.strip().lower()
+    if "@" in identifier:
+        user = db.scalar(select(User).where(User.email == identifier))
+    elif identifier.startswith(("+", "0")) and re.fullmatch(r"[+0-9\s().-]+", identifier):
+        # Legacy numeric usernames take precedence to preserve existing logins.
+        user = db.scalar(select(User).where(User.username == identifier))
+        if not user:
+            try:
+                user = db.scalar(select(User).where(User.phone == clean_phone(identifier)))
+            except ValueError:
+                user = None
+    else:
+        user = db.scalar(select(User).where(User.username == identifier))
     if not user or not hmac.compare_digest(user.password_hash, password_hash(data.password, user.password_hash.split(":")[0])):
         raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu chưa đúng.")
     return session_response(user, db)
@@ -100,7 +165,23 @@ def logout(user: User = Depends(current_user), authorization: str = Header(), db
 
 @app.get("/api/me")
 def me(user: User = Depends(current_user)):
-    return public_user(user)
+    return private_user(user)
+
+@app.patch("/api/me")
+def edit_profile(data: ProfileUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    changes = data.model_dump(exclude_unset=True)
+    email, phone = changes.get("email", user.email), changes.get("phone", user.phone)
+    if not email and not phone:
+        raise HTTPException(400, "Hãy giữ ít nhất một email hoặc số điện thoại.")
+    for key, value in changes.items():
+        setattr(user, key, value)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Thông tin liên hệ đã được sử dụng.")
+    db.refresh(user)
+    return private_user(user)
 
 @app.post("/api/uploads", status_code=201)
 async def upload(file: UploadFile = File(), user: User = Depends(current_user)):
