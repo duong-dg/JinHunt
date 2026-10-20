@@ -405,8 +405,11 @@ def test_notification_pagination(client):
     actor_id = client.get('/api/me', headers=player).json()['id']
     database = app.dependency_overrides[get_db]()
     db = next(database)
+    from app.models import Case
     for i in range(35):
-        db.add(Notification(recipient_id=owner_id, actor_id=actor_id, case_id=c['id'], kind='comment',event_key=f'qa-comment:{i}'))
+        post=Case(creator_id=owner_id,title=f'Group {i}',answer='Secret',image_url=c['image_url'])
+        db.add(post);db.flush()
+        db.add(Notification(recipient_id=owner_id, actor_id=actor_id, case_id=post.id, kind='comment',event_key=f'qa-comment:{i}'))
     db.commit()
     database.close()
     page = client.get('/api/notifications', headers=owner).json()
@@ -528,3 +531,69 @@ def test_legal_pages_and_private_request_intake(client,monkeypatch):
     assert len(set(refs))==5 and all(len(ref)==24 for ref in refs)
     assert client.post('/api/legal/requests',json=data).status_code==429
     assert client.get('/api/legal/requests').status_code==405
+
+
+def test_personal_timeline_is_private_and_paginated(client, monkeypatch):
+    owner=account(client,'timelineowner')
+    other=account(client,'timelineother')
+    published=create_case(client,owner)
+    create_case(client,other)
+    monkeypatch.setenv('MODERATION_REQUIRE_REVIEW','1')
+    pending=create_case(client,owner)
+    assert pending['moderation_status']=='pending'
+    assert client.get('/api/me/cases').status_code==401
+    rows=client.get('/api/me/cases',headers=owner).json()
+    assert [row['id'] for row in rows]==[pending['id'],published['id']]
+    assert all('answer' not in row and 'latitude' not in row for row in rows)
+    assert pending['id'] not in [row['id'] for row in client.get('/api/me/cases',headers=other).json()]
+    assert pending['id'] not in [row['id'] for row in client.get('/api/cases').json()]
+    assert client.get('/api/me/cases?offset=1&limit=1',headers=owner).json()[0]['id']==published['id']
+
+
+def test_solvers_can_read_answers_only_for_solved_case(client):
+    owner=account(client,'answerowner');solver=account(client,'answersolver');outsider=account(client,'answeroutsider')
+    case=create_case(client,owner)
+    other_case=create_case(client,owner)
+    url=f'/api/cases/{case["id"]}/comments'
+    other_url=f'/api/cases/{other_case["id"]}/comments'
+    answer='Chợ Bến Thành'
+    client.post(url,headers=owner,json={'content':answer})
+    client.post(other_url,headers=owner,json={'content':answer})
+    for headers in ({},solver,outsider):
+        response=client.get(url,headers=headers)
+        assert response.headers['cache-control']=='no-store'
+        assert response.json()[0]['is_hidden'] is True
+        assert answer not in response.text
+    assert client.get(url,headers=owner).json()[0]['content']==answer
+    result=client.post(url,headers=solver,json={'content':answer}).json()
+    assert result['status']=='correct'
+    assert all(row['content']==answer and not row['is_hidden'] for row in client.get(url,headers=solver).json())
+    assert client.get(other_url,headers=solver).json()[0]['is_hidden'] is True
+    assert client.get(url,headers=outsider).json()[0]['is_hidden'] is True
+    assert client.get(url).json()[0]['is_hidden'] is True
+
+
+def test_notifications_group_people_and_snapshot_reads(client):
+    from app.models import Notification, User
+    owner=account(client,'groupowner');first=account(client,'groupfirst');second=account(client,'groupsecond');third=account(client,'groupthird')
+    post=create_case(client,owner);path=f'/api/cases/{post["id"]}'
+    client.put(path+'/like',headers=first)
+    client.put(path+'/like',headers=second)
+    client.put(path+'/like',headers=third)
+    for _ in range(2):client.post(path+'/comments',headers=first,json={'content':'Beautiful place'})
+    inbox=client.get('/api/notifications',headers=owner).json()
+    assert len(inbox['items'])==2 and inbox['unread_count']==2
+    comment_group,like_group=inbox['items']
+    assert comment_group['kind']=='comment' and comment_group['actor_count']==1
+    assert like_group['actor_count']==3
+    assert [a['username'] for a in like_group['actors']]==['groupthird','groupsecond']
+    assert all('email' not in a and 'phone' not in a for a in like_group['actors'])
+    client.post(path+'/comments',headers=second,json={'content':'Another view'})
+    client.post(f'/api/notifications/{comment_group["id"]}/read',headers=owner)
+    latest=client.get('/api/notifications',headers=owner).json()['items'][0]
+    assert latest['kind']=='comment' and not latest['is_read'] and latest['actor_count']==2
+    assert [a['username'] for a in latest['actors']]==['groupsecond','groupfirst']
+    client.post(f'/api/notifications/{latest["id"]}/read',headers=owner)
+    assert client.get('/api/notifications',headers=owner).json()['unread_count']==1
+    client.post(f'/api/notifications/{like_group["id"]}/read',headers=owner)
+    assert client.get('/api/notifications',headers=owner).json()['unread_count']==0

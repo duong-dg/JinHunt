@@ -3,15 +3,25 @@ const emailFlows=new Map();
 function attachEmailFlow(form,registration){
   const email=form.elements.email,box=document.createElement('section');box.className='email-verification';
   box.innerHTML='<div class="email-verification-actions"><button type="button" class="outline email-send">Gửi mã xác minh email</button></div><div class="email-code-row" hidden><label>Mã xác minh 6 số<input type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6 chữ số trong email"></label><button type="button" class="outline email-confirm">Xác minh</button></div><p class="email-status" role="status" aria-live="polite"></p>';
-  email.closest('label').after(box);
+  const emailLabel=email.closest('label');
+  if(!registration){
+    const field=document.createElement('div');field.className='profile-email-field';emailLabel.before(field);field.append(emailLabel,box);
+  }else emailLabel.after(box);
+  const edit=document.createElement('button');edit.type='button';edit.className='email-edit text-button';edit.textContent='Sửa';edit.hidden=true;
+  const badge=document.createElement('span');badge.className='verified-badge';badge.textContent='✓ Đã xác minh';badge.hidden=true;
+  if(!registration){const tools=document.createElement('div');tools.className='email-field-tools';tools.append(badge,edit);emailLabel.append(tools);}
+  let editing=false;
+  edit.onclick=()=>{editing=true;sync();email.focus();email.select();};
   const send=box.querySelector('.email-send'),confirm=box.querySelector('.email-confirm'),code=box.querySelector('input'),status=box.querySelector('.email-status'),row=box.querySelector('.email-code-row');
   const state={email:'',challenge:null,proof:null,ready:false,cooldown:0};emailFlows.set(form,state);
   const normalized=()=>email.value.trim().toLowerCase();
-  const sync=()=>{
+  const sync=(reset=false)=>{
+    if(reset===true)editing=false;
     const current=normalized();
     if(current!==state.email){state.email=current;state.challenge=null;state.proof=null;state.ready=false;row.hidden=true;code.value='';}
     box.hidden=registration? !registerMode||email.disabled||!current:!user||user.guardian_managed||!current;
     const verified=!registration&&current===user?.email&&user?.email_verified;
+    if(!registration){email.readOnly=Boolean(verified&&!editing);badge.hidden=!verified;edit.hidden=!verified||editing;box.hidden=box.hidden||Boolean(verified&&!editing);}
     if(verified){status.textContent='✓ Email đã xác minh';box.dataset.verified='true';send.hidden=true;row.hidden=true;}
     else{box.dataset.verified=state.ready?'true':'false';send.hidden=false;status.textContent=state.ready?'✓ Email đã xác minh, có thể hoàn tất đăng ký.':current?'Cần mã gửi đến hộp thư để xác minh email này.':'';}
   };
@@ -49,7 +59,7 @@ function attachEmailFlow(form,registration){
 attachEmailFlow($('#auth-form'),true);
 const refreshProfileEmail=attachEmailFlow($('#profile-form'),false);
 window.renderEmailVerification=refreshProfileEmail;
-$('#account').addEventListener('click',refreshProfileEmail);
+
 function acceptLinkedEmail(result,restore=false){
   if(!result||typeof result.verification_token!=='string'||typeof result.email!=='string'||!Number.isFinite(result.expires_at)||result.expires_at*1000<=Date.now())return;
   const form=$('#auth-form'),state=emailFlows.get(form),box=form.querySelector('.email-verification');

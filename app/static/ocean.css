@@ -141,3 +141,33 @@ header.sidebar{background:linear-gradient(180deg,#fff,#f4fbfd);border-right-colo
   .right-rail .legal-footer a{font-size:10px;line-height:1.5;min-height:44px;white-space:nowrap}
   .right-rail .legal-draft-hint{margin:0;font-size:11px;text-align:left;line-height:1.7}
 }
+
+/* Consistent profile rows and a personal timeline. */
+#profile-form{align-items:start}
+#profile-form>label:has(textarea){grid-column:auto}
+#profile-form input,#profile-form textarea{box-sizing:border-box;width:100%;height:54px;min-height:54px;font-size:16px}
+#profile-form textarea{height:54px;min-height:54px;resize:vertical}
+.profile-email-field{min-width:0;margin:12px 0}
+.profile-email-field>label{display:block;margin:0;position:relative}
+.profile-email-field .email-verification{margin:10px 0 0;padding:12px}
+.email-field-tools{display:flex;align-items:center;gap:10px;margin-top:8px;min-height:28px}
+.verified-badge{display:inline-flex;align-items:center;color:#0783b4;background:#e4f7ff;border-radius:20px;padding:4px 10px;font-size:12px;font-weight:700}
+.email-edit{margin:0;padding:4px 10px;min-height:30px;color:#087d94}
+.email-edit[hidden],.verified-badge[hidden],#timeline-profile[hidden],.photo-frame[hidden],.post-actions[hidden]{display:none}
+#profile-form input[readonly]{background:#f0f7fa;color:#45616c}
+#timeline-profile{display:flex;align-items:center;gap:20px;padding:24px;margin-bottom:24px;background:#fff;border:1px solid #dcebf0;border-radius:18px}
+#timeline-profile .avatar{width:80px;height:80px;flex-shrink:0;font-size:30px}
+#timeline-profile>div{flex:1;min-width:0;overflow-wrap:anywhere}
+#timeline-profile h2{margin:0;font-size:24px}
+#timeline-profile p{margin:6px 0;color:#607786;font-size:14px}
+.timeline-bio{white-space:pre-wrap}
+@media(max-width:520px){#timeline-profile{flex-wrap:wrap;padding:18px;gap:14px}#timeline-profile>button{width:100%}.profile-email-field{margin:12px 0}#profile-form>label{display:block}}
+
+.share-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:8px 10px;border:0;border-radius:10px;color:#087d94;background:#eaf8fc;font:inherit;font-size:14px;cursor:pointer}
+.share-button svg{width:20px;height:20px;flex-shrink:0}
+.share-button:hover{background:#d7f1f8;color:#075d70}
+.post-actions{flex-wrap:wrap}
+.detail-author{flex-wrap:wrap}
+#share-link{width:100%;box-sizing:border-box;font-size:16px}
+#share-status{font-size:14px;color:#45616c}
+@media(max-width:520px){.share-button{font-size:13px;padding:8px}.post-actions .solved-count{width:100%;margin:0}}

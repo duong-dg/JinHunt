@@ -50,6 +50,8 @@ async def staff_response_headers(request:Request,call_next):
         response.headers['Referrer-Policy']='no-referrer'
         response.headers['X-Frame-Options']='DENY'
         response.headers['X-Content-Type-Options']='nosniff'
+    if request.url.path.startswith('/api/cases/') and request.url.path.endswith('/comments'):
+        response.headers['Cache-Control']='no-store'
     if request.url.path.startswith(('/api/email-verification/','/api/me/email-verification/')):
         response.headers['Cache-Control']='no-store'
     return response
@@ -443,6 +445,10 @@ def create_case(data: CaseCreate, user: User = Depends(participant), db: Session
 def list_cases(offset: int = Query(default=0, ge=0), limit: int = Query(default=24, ge=1, le=100), db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
     return [public_case(c, db, viewer) for c in db.scalars(select(Case).join(User,Case.creator_id==User.id).where(User.account_status=="active",User.suspended==0,Case.moderation_status=="published").order_by(Case.id.desc()).offset(offset).limit(limit))]
 
+@app.get("/api/me/cases")
+def my_cases(offset: int = Query(default=0, ge=0), limit: int = Query(default=12, ge=1, le=100), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return [public_case(c, db, user) for c in db.scalars(select(Case).where(Case.creator_id==user.id).order_by(Case.id.desc()).offset(offset).limit(limit))]
+
 @app.get("/api/cases/{case_id}")
 def case_detail(case_id: int, db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
     return public_case(get_case(case_id, db), db, viewer)
@@ -489,8 +495,9 @@ class CommentCreate(BaseModel):
         return self
 
 @app.get("/api/cases/{case_id}/comments")
-def comments(case_id: int, db: Session = Depends(get_db)):
-    get_case(case_id, db)
+def comments(case_id: int, db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
+    case = get_case(case_id, db)
+    can_read_answers = bool(viewer and (viewer.id == case.creator_id or db.scalar(select(Solve.id).where(Solve.case_id == case_id, Solve.user_id == viewer.id))))
     rows = db.scalars(select(Comment).where(Comment.case_id == case_id).order_by(Comment.id.desc()).limit(100))
     result = []
     for c in rows:
@@ -500,8 +507,8 @@ def comments(case_id: int, db: Session = Depends(get_db)):
             continue
         result.append({"id": c.id, "username": author.username,
              "display_name": author.display_name or author.username, "avatar_url": author.avatar_url,
-             "content": "Đã ẩn nội dung dự đoán." if c.is_hidden else c.content,
-             "is_hidden": bool(c.is_hidden), "created_at": c.created_at})
+             "content": "Đã ẩn nội dung dự đoán." if c.is_hidden and not can_read_answers else c.content,
+             "is_hidden": bool(c.is_hidden and not can_read_answers), "created_at": c.created_at})
     return result
 
 @app.post("/api/cases/{case_id}/comments", status_code=201)
@@ -553,18 +560,28 @@ def unlike_case(case_id: int, user: User = Depends(participant), db: Session = D
 
 @app.get("/api/notifications")
 def notifications(before_id: int | None = Query(default=None, ge=1), user: User = Depends(current_user), db: Session = Depends(get_db)):
-    query = select(Notification).where(Notification.recipient_id == user.id)
+    # Page by whole groups, never by individual events inside a group.
+    groups = select(func.max(Notification.id).label("latest_id")).where(Notification.recipient_id == user.id).group_by(Notification.case_id, Notification.kind).subquery()
+    query = select(groups.c.latest_id)
     if before_id:
-        query = query.where(Notification.id < before_id)
-    rows = list(db.scalars(query.order_by(Notification.id.desc()).limit(30)))
+        query = query.where(groups.c.latest_id < before_id)
+    ids = list(db.scalars(query.order_by(groups.c.latest_id.desc()).limit(31)))
     items = []
-    for row in rows:
-        actor, case = db.get(User, row.actor_id), db.get(Case, row.case_id)
-        actor_data = public_user(actor) if actor.account_status=="active" and not actor.suspended else {"id":actor.id,"username":"account-paused","display_name":"Tài khoản đã dừng","avatar_url":None}
-        items.append({"id": row.id, "kind": row.kind, "actor": actor_data, "case_id": case.id,
-                      "case_title": case.title if db.get(User,case.creator_id).account_status=="active" else "Bài không còn hiển thị", "is_read": bool(row.is_read), "created_at": row.created_at})
-    return {"items": items, "unread_count": db.scalar(select(func.count()).select_from(Notification).where(Notification.recipient_id == user.id, Notification.is_read == 0)),
-            "next_before_id": rows[-1].id if len(rows) == 30 else None}
+    for latest_id in ids[:30]:
+        row = db.get(Notification, latest_id)
+        scope = (Notification.recipient_id == user.id, Notification.case_id == row.case_id, Notification.kind == row.kind, Notification.id <= latest_id)
+        actor_ids = list(db.scalars(select(Notification.actor_id).where(*scope).group_by(Notification.actor_id).order_by(func.max(Notification.id).desc()).limit(2)))
+        actors = []
+        for actor_id in actor_ids:
+            actor = db.get(User, actor_id)
+            actors.append(public_user(actor) if actor.account_status=="active" and not actor.suspended else {"id":actor.id,"username":"account-paused","display_name":"Tài khoản đã dừng","avatar_url":None})
+        actor_count = db.scalar(select(func.count(func.distinct(Notification.actor_id))).where(*scope))
+        unread = db.scalar(select(func.count()).select_from(Notification).where(*scope, Notification.is_read == 0))
+        case = db.get(Case, row.case_id)
+        items.append({"id":row.id,"kind":row.kind,"actor":actors[0],"actors":actors,"actor_count":actor_count,"case_id":case.id,
+                      "case_title":case.title if db.get(User,case.creator_id).account_status=="active" else "Bài không còn hiển thị","is_read":not bool(unread),"created_at":row.created_at})
+    unread_groups = select(Notification.case_id, Notification.kind).where(Notification.recipient_id==user.id, Notification.is_read==0).group_by(Notification.case_id,Notification.kind).subquery()
+    return {"items":items,"unread_count":db.scalar(select(func.count()).select_from(unread_groups)),"next_before_id":ids[29] if len(ids)>30 else None}
 
 class NotificationRead(BaseModel):
     through_id: int = Field(ge=1)
@@ -580,7 +597,8 @@ def read_notification(notification_id: int, user: User = Depends(current_user), 
     entry = db.scalar(select(Notification).where(Notification.id == notification_id, Notification.recipient_id == user.id))
     if not entry:
         raise HTTPException(404, "Không tìm thấy thông báo.")
-    entry.is_read = 1
+    # Only acknowledge events included in the clicked group's snapshot.
+    db.execute(update(Notification).where(Notification.recipient_id==user.id, Notification.case_id==entry.case_id, Notification.kind==entry.kind, Notification.id<=entry.id).values(is_read=1))
     db.commit()
     return {"status": "ok"}
 
