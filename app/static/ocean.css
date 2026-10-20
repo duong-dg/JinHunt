@@ -178,11 +178,6 @@ header.sidebar{background:linear-gradient(180deg,#fff,#f4fbfd);border-right-colo
 #timeline-logout:hover{background:#fbece8}
 @media(max-width:520px){.timeline-actions{width:100%}.timeline-actions button{flex:1;padding:10px 8px;font-size:14px}}
 
-.avatar[data-frame=bronze]{outline:2px solid #ba7948;outline-offset:2px;box-shadow:0 0 0 5px #f5e5d4}
-.avatar[data-frame=silver]{outline:2px solid #9aafbf;outline-offset:2px;box-shadow:0 0 0 5px #e6edf4}
-.avatar[data-frame=gold]{outline:3px solid #dba827;outline-offset:2px;box-shadow:0 0 0 6px #fff2cb}
-.avatar[data-frame=platinum]{outline:3px double #28a997;outline-offset:3px;box-shadow:0 0 0 7px #dbf8f0}
-.avatar[data-frame=diamond]{outline:3px solid #7394ef;outline-offset:3px;box-shadow:0 0 0 6px #e5e8ff,0 0 16px #84d9ee80}
 .daily-journey{margin-top:20px;padding-top:16px;border-top:1px solid #dcebf0}
 .daily-journey[hidden],#profile-daily[hidden]{display:none}
 .daily-journey h3{margin:0 0 8px;font-size:17px}
@@ -200,3 +195,42 @@ header.sidebar{background:linear-gradient(180deg,#fff,#f4fbfd);border-right-colo
 .level-medal{font-size:36px;color:#d59c20;flex-shrink:0}
 #level-celebration-close{align-self:flex-start;flex-shrink:0;border:0;background:transparent;color:#607786;font-size:24px;width:36px;min-height:36px;padding:0;margin-left:auto}
 @media(max-width:520px){#level-celebration{right:16px;bottom:calc(86px + env(safe-area-inset-bottom))}}
+
+/* Metal frames and inset jewel badges stay readable at comment size. */
+.avatar[data-frame]{position:relative;isolation:isolate;overflow:visible;border:0;outline:0;box-shadow:none}
+.avatar-face{position:relative;z-index:1;display:inline-flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;overflow:hidden;background:#e3f5f7;color:#087d94;font:inherit}
+.avatar-face img{display:block;width:100%;height:100%;object-fit:cover;border-radius:50%}
+.avatar[data-frame]:not([data-frame=none])::before{content:"";position:absolute;inset:-4px;border-radius:50%;background:var(--metal);box-shadow:0 2px 6px var(--metal-shadow,#263d4829);z-index:0}
+.avatar[data-frame]:not([data-frame=none]) .avatar-face{box-sizing:border-box;border:2px solid #fff}
+.avatar[data-frame=bronze]{--metal:conic-gradient(from 30deg,#7b3f1e,#f0bf88 14%,#aa612e 30%,#f8d5a5 48%,#874722 66%,#dc9a60 85%,#7b3f1e);--badge-bg:linear-gradient(145deg,#f3cf9f,#ad6738);--badge-ink:#633418}
+.avatar[data-frame=silver]{--metal:conic-gradient(from 30deg,#718494,#f8fcff 16%,#9cabb8 30%,#eef5fa 48%,#738594 66%,#dce6ed 85%,#718494);--badge-bg:linear-gradient(145deg,#fff,#bccbd7);--badge-ink:#455969}
+.avatar[data-frame=gold]{--metal:conic-gradient(from 30deg,#96600e,#ffe79d 14%,#d69d24 30%,#fff3c4 48%,#b47d13 66%,#f5ce5e 85%,#96600e);--badge-bg:linear-gradient(145deg,#fff0b3,#dcad39);--badge-ink:#79500b;--metal-shadow:#c192303f}
+.avatar[data-frame=platinum]{--metal:conic-gradient(from 30deg,#347f80,#ecffff 14%,#72c2bd 30%,#edfff9 48%,#479b9d 66%,#baf0df 85%,#347f80);--badge-bg:linear-gradient(145deg,#efffff,#77c8bc);--badge-ink:#176566;--metal-shadow:#31a49c40}
+.avatar[data-frame=diamond]{--metal:conic-gradient(from 20deg,#7464cb,#c8f4ff 12%,#fff 20%,#9d8bea 32%,#bbecff 45%,#fff 53%,#687dc9 66%,#d8c4ff 80%,#b1f1f3 90%,#7464cb);--badge-bg:linear-gradient(135deg,#fff,#b7e6ff 45%,#b9a6ee);--badge-ink:#51408e;--metal-shadow:#8873d84a}
+.avatar[data-frame=platinum]::before,.avatar[data-frame=diamond]::before{inset:-5px}
+.avatar .rank-badge{position:absolute;z-index:2;right:-5px;bottom:-6px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:44%;height:44%;min-width:17px;min-height:17px;max-width:30px;max-height:30px;padding:2px;border:1.5px solid white;border-radius:6px;background:var(--badge-bg);color:var(--badge-ink);box-shadow:0 2px 4px #20394330}
+.avatar[data-frame=gold] .rank-badge,.avatar[data-frame=platinum] .rank-badge{border-radius:7px 7px 10px 10px}
+.avatar[data-frame=diamond] .rank-badge{border-radius:7px;box-shadow:0 2px 6px #7662be45}
+.avatar .rank-badge svg{width:100%;height:100%;display:block}
+span.rank-name[data-rank]{display:inline;font-size:inherit;line-height:inherit;letter-spacing:inherit;font-weight:inherit}
+.avatar span.avatar-face{font-size:inherit;color:#087d94}
+span.rank-name[data-rank=bronze]{color:#965024}
+span.rank-name[data-rank=silver]{color:#546778}
+span.rank-name[data-rank=gold]{color:#926100;font-weight:750}
+span.rank-name[data-rank=platinum]{color:#087674;font-weight:750}
+span.rank-name[data-rank=diamond]{color:#6451b5;font-weight:800;text-shadow:0 1px 9px #a5ccef35}
+
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+[data-user]{cursor:pointer}[data-user]:focus-visible{outline:2px solid #079db7;outline-offset:5px}
+.search-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:18px 0}
+.search-toolbar .search-label{flex:1;min-width:150px;margin:0}
+.search-toolbar input{box-sizing:border-box;width:100%;margin:0;min-height:46px;font-size:16px}
+.search-toolbar button{min-height:44px;font-size:14px}
+.bookmark-button{display:inline-flex;align-items:center;gap:6px;border:0;border-radius:10px;background:#f0f7f9;color:#537481;padding:8px 10px;min-height:44px;font:inherit;font-size:14px}
+.bookmark-button svg{width:20px;height:20px}.bookmark-button.is-saved{color:#087d94;background:#dcf4f8}
+.bookmark-button.is-saved svg{fill:#087d9420}.comment-report{display:block;border:0;background:none;color:#6b8086;font-size:12px;min-height:36px;padding:6px 0}
+.profile-counts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
+.profile-counts button{border:0;background:none;padding:6px 0;color:#087d94;font:inherit;min-height:36px}
+.people-row{display:flex;align-items:center;gap:15px;padding:16px 0;border-bottom:1px solid #dcebf0}.people-row strong{flex:1;min-width:0;overflow-wrap:anywhere}.people-row button{font-size:13px}
+#password-reset-confirm[hidden]{display:none}#password-reset-status{font-size:14px;line-height:1.7;color:#567b83}
+@media(max-width:520px){.search-toolbar{gap:8px}.search-toolbar #following-feed{width:100%;text-align:left;min-height:36px}.bookmark-button{font-size:13px}.sidebar nav button{padding-left:4px;padding-right:4px}}

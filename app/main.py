@@ -22,7 +22,9 @@ from sqlalchemy import select, func, update, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
-from .models import ModerationAudit, User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation, ImageReview, PointAward, CaseShare, DailyReward
+from .models import ModerationAudit, User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation, ImageReview, PointAward, CaseShare, DailyReward, Bookmark, Follow
+from .community import build_router as community_router, visible_cases, blocked_ids, is_blocked
+from .password_reset import build_router as reset_router
 from .progression import progression, local_day
 from .migrations import upgrade
 from .image_safety import scan_image
@@ -46,6 +48,8 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.middleware('http')
 async def staff_response_headers(request:Request,call_next):
     response=await call_next(request)
+    if request.url.path.startswith('/api/'):
+        response.headers['Cache-Control']='no-store'
     if request.url.path.startswith(('/staff','/api/staff/','/api/moderation/','/static/staff')):
         response.headers['Cache-Control']='no-store'
         response.headers['Referrer-Policy']='no-referrer'
@@ -53,7 +57,7 @@ async def staff_response_headers(request:Request,call_next):
         response.headers['X-Content-Type-Options']='nosniff'
     if request.url.path.startswith('/api/cases/') and request.url.path.endswith('/comments'):
         response.headers['Cache-Control']='no-store'
-    if request.url.path.startswith(('/api/email-verification/','/api/me/')):
+    if request.url.path.startswith(('/api/email-verification/','/api/me/','/api/auth/password-reset/','/api/users/','/api/notifications')):
         response.headers['Cache-Control']='no-store'
     return response
 
@@ -125,7 +129,7 @@ async def review_upload(image_url,user,db):
     return status,scan
 
 def notify(db, case, actor, kind, source_id=None):
-    if case.creator_id == actor.id:
+    if case.creator_id == actor.id or is_blocked(db,actor,case.creator_id):
         return
     key = f"comment:{source_id}" if kind == "comment" else f"{kind}:{case.id}:{actor.id}"
     existing = db.scalar(select(Notification).where(Notification.event_key == key))
@@ -455,10 +459,11 @@ class CaseCreate(BaseModel):
             raise ValueError("Tên thay thế cần từ 2 đến 200 ký tự.")
         return self
 
-def get_case(case_id, db):
+def get_case(case_id, db, viewer=None):
     case = db.get(Case, case_id)
     if not case or case.moderation_status != "published" or db.get(User,case.creator_id).account_status != "active" or db.get(User,case.creator_id).suspended:
         raise HTTPException(404, "Không tìm thấy thử thách.")
+    if is_blocked(db,viewer,case.creator_id):raise HTTPException(404,'Không tìm thấy thử thách.')
     return case
 
 def public_case(case, db, viewer=None):
@@ -467,6 +472,7 @@ def public_case(case, db, viewer=None):
             "moderation_status":case.moderation_status, "image_url": case.image_url, "creator": creator.username, "creator_id": creator.id,
             "creator_display_name": creator.display_name or creator.username, "creator_avatar_url": creator.avatar_url, "creator_level":progression(creator.total_xp)["level"],
             "likes": db.scalar(select(func.count()).select_from(Like).where(Like.case_id == case.id)),
+            "bookmarked_by_me":bool(viewer and db.scalar(select(Bookmark.id).where(Bookmark.user_id==viewer.id,Bookmark.case_id==case.id))),
             "liked_by_me": bool(viewer and db.scalar(select(Like.id).where(Like.user_id == viewer.id, Like.case_id == case.id))),
             "comments": db.scalar(select(func.count()).select_from(Comment).where(Comment.case_id == case.id)),
             "reward_xp": case.reward_xp, "has_coordinates": case.latitude is not None,
@@ -494,8 +500,15 @@ def create_case(data: CaseCreate, user: User = Depends(participant), db: Session
     return public_case(case, db, user)
 
 @app.get("/api/cases")
-def list_cases(offset: int = Query(default=0, ge=0), limit: int = Query(default=24, ge=1, le=100), db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
-    return [public_case(c, db, viewer) for c in db.scalars(select(Case).join(User,Case.creator_id==User.id).where(User.account_status=="active",User.suspended==0,Case.moderation_status=="published").order_by(Case.id.desc()).offset(offset).limit(limit))]
+def list_cases(offset: int = Query(default=0, ge=0), limit: int = Query(default=24, ge=1, le=100), q: str = Query(default="", max_length=100), following:bool=False, db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
+    query=visible_cases(db,viewer)
+    if following:
+        if not viewer:raise HTTPException(401,'Đăng nhập để xem bài đang theo dõi.')
+        query=query.where(Case.creator_id.in_(select(Follow.target_id).where(Follow.user_id==viewer.id)))
+    if q.strip():
+        escaped=q.strip().replace("\\","\\\\").replace("%","\\%").replace("_","\\_")
+        query=query.where(Case.title.ilike('%'+escaped+'%',escape='\\') | Case.description.ilike('%'+escaped+'%',escape='\\'))
+    return [public_case(c,db,viewer) for c in db.scalars(query.order_by(Case.id.desc()).offset(offset).limit(limit))]
 
 @app.get("/api/me/cases")
 def my_cases(offset: int = Query(default=0, ge=0), limit: int = Query(default=12, ge=1, le=100), user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -503,7 +516,7 @@ def my_cases(offset: int = Query(default=0, ge=0), limit: int = Query(default=12
 
 @app.get("/api/cases/{case_id}")
 def case_detail(case_id: int, db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
-    return public_case(get_case(case_id, db), db, viewer)
+    return public_case(get_case(case_id, db, viewer), db, viewer)
 
 class Guess(BaseModel):
     share_token: str | None = Field(default=None, max_length=64)
@@ -515,7 +528,7 @@ class Guess(BaseModel):
 def guess(case_id: int, data: Guess, user: User = Depends(participant), db: Session = Depends(get_db)):
     if user.guardian_managed and data.latitude is not None:
         raise HTTPException(403,"Tài khoản được người đại diện quản lý chưa sử dụng GPS.")
-    case = get_case(case_id, db)
+    case = get_case(case_id, db, user)
     if case.creator_id == user.id:
         raise HTTPException(400, "Bạn là người tạo thử thách này.")
     if db.scalar(select(Solve).where(Solve.user_id == user.id, Solve.case_id == case_id)):
@@ -551,16 +564,18 @@ class CommentCreate(BaseModel):
 
 @app.get("/api/cases/{case_id}/comments")
 def comments(case_id: int, db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
-    case = get_case(case_id, db)
+    case = get_case(case_id, db, viewer)
     can_read_answers = bool(viewer and (viewer.id == case.creator_id or db.scalar(select(Solve.id).where(Solve.case_id == case_id, Solve.user_id == viewer.id))))
     rows = db.scalars(select(Comment).where(Comment.case_id == case_id).order_by(Comment.id.desc()).limit(100))
     result = []
+    excluded=blocked_ids(db,viewer)
     for c in rows:
+        if c.user_id in excluded:continue
         author = db.get(User, c.user_id)
-        if author.account_status != "active" or author.suspended:
+        if c.is_removed or author.account_status != "active" or author.suspended:
             result.append({"id":c.id,"username":"account-paused","display_name":"Tài khoản đã dừng","avatar_url":None,"content":"Bình luận không còn hiển thị.","is_hidden":True,"created_at":c.created_at})
             continue
-        result.append({"id": c.id, "username": author.username,
+        result.append({"id": c.id, "user_id":author.id, "username": author.username,
              "display_name": author.display_name or author.username, "avatar_url": author.avatar_url, "level":progression(author.total_xp)["level"],
              "content": "Đã ẩn nội dung dự đoán." if c.is_hidden and not can_read_answers else c.content,
              "is_hidden": bool(c.is_hidden and not can_read_answers), "created_at": c.created_at})
@@ -570,7 +585,7 @@ def comments(case_id: int, db: Session = Depends(get_db), viewer: User | None = 
 def comment(case_id: int, data: CommentCreate, user: User = Depends(participant), db: Session = Depends(get_db)):
     if user.guardian_managed and data.latitude is not None:
         raise HTTPException(403,"Tài khoản được người đại diện quản lý chưa sử dụng GPS.")
-    case = get_case(case_id, db)
+    case = get_case(case_id, db, user)
     limit_attempt(db, user, case_id)
     content = data.content.strip()
     hidden, correct = answer_matches(db, case, content)
@@ -596,7 +611,7 @@ def comment(case_id: int, data: CommentCreate, user: User = Depends(participant)
 
 @app.put("/api/cases/{case_id}/like")
 def like_case(case_id: int, share_token: str | None = Query(default=None,max_length=64), user: User = Depends(participant), db: Session = Depends(get_db)):
-    case = get_case(case_id, db)
+    case = get_case(case_id, db, user)
     if not db.scalar(select(Like.id).where(Like.user_id == user.id, Like.case_id == case.id)):
         try:
             with db.begin_nested():
@@ -613,7 +628,7 @@ def like_case(case_id: int, share_token: str | None = Query(default=None,max_len
 
 @app.post("/api/cases/{case_id}/share")
 def share_case(case_id: int, user: User = Depends(participant), db: Session = Depends(get_db)):
-    case=get_case(case_id,db)
+    case=get_case(case_id,db,user)
     if user.id!=case.creator_id:
         return {"share_token":None}
     db.execute(update(Case).where(Case.id==case.id).values(reward_xp=Case.reward_xp))
@@ -626,7 +641,7 @@ def share_case(case_id: int, user: User = Depends(participant), db: Session = De
 
 @app.delete("/api/cases/{case_id}/like")
 def unlike_case(case_id: int, user: User = Depends(participant), db: Session = Depends(get_db)):
-    get_case(case_id, db)
+    get_case(case_id, db, user)
     db.execute(delete(Like).where(Like.user_id == user.id, Like.case_id == case_id))
     db.commit()
     return {"liked_by_me": False, "likes": db.scalar(select(func.count()).select_from(Like).where(Like.case_id == case_id))}
@@ -634,7 +649,8 @@ def unlike_case(case_id: int, user: User = Depends(participant), db: Session = D
 @app.get("/api/notifications")
 def notifications(before_id: int | None = Query(default=None, ge=1), user: User = Depends(current_user), db: Session = Depends(get_db)):
     # Page by whole groups, never by individual events inside a group.
-    groups = select(func.max(Notification.id).label("latest_id")).where(Notification.recipient_id == user.id).group_by(Notification.case_id, Notification.kind).subquery()
+    excluded=blocked_ids(db,user)
+    groups = select(func.max(Notification.id).label("latest_id")).where(Notification.recipient_id == user.id,Notification.actor_id.not_in(excluded)).group_by(Notification.case_id, Notification.kind).subquery()
     query = select(groups.c.latest_id)
     if before_id:
         query = query.where(groups.c.latest_id < before_id)
@@ -642,7 +658,7 @@ def notifications(before_id: int | None = Query(default=None, ge=1), user: User 
     items = []
     for latest_id in ids[:30]:
         row = db.get(Notification, latest_id)
-        scope = (Notification.recipient_id == user.id, Notification.case_id == row.case_id, Notification.kind == row.kind, Notification.id <= latest_id)
+        scope = (Notification.recipient_id == user.id, Notification.case_id == row.case_id, Notification.kind == row.kind, Notification.id <= latest_id, Notification.actor_id.not_in(excluded))
         actor_ids = list(db.scalars(select(Notification.actor_id).where(*scope).group_by(Notification.actor_id).order_by(func.max(Notification.id).desc()).limit(2)))
         actors = []
         for actor_id in actor_ids:
@@ -650,10 +666,10 @@ def notifications(before_id: int | None = Query(default=None, ge=1), user: User 
             actors.append(public_user(actor) if actor.account_status=="active" and not actor.suspended else {"id":actor.id,"username":"account-paused","display_name":"Tài khoản đã dừng","avatar_url":None})
         actor_count = db.scalar(select(func.count(func.distinct(Notification.actor_id))).where(*scope))
         unread = db.scalar(select(func.count()).select_from(Notification).where(*scope, Notification.is_read == 0))
-        case = db.get(Case, row.case_id)
-        items.append({"id":row.id,"kind":row.kind,"actor":actors[0],"actors":actors,"actor_count":actor_count,"case_id":case.id,
-                      "case_title":case.title if db.get(User,case.creator_id).account_status=="active" else "Bài không còn hiển thị","is_read":not bool(unread),"created_at":row.created_at})
-    unread_groups = select(Notification.case_id, Notification.kind).where(Notification.recipient_id==user.id, Notification.is_read==0).group_by(Notification.case_id,Notification.kind).subquery()
+        case = db.get(Case, row.case_id) if row.case_id is not None else None
+        items.append({"id":row.id,"kind":row.kind,"actor":actors[0],"actors":actors,"actor_count":actor_count,"case_id":case.id if case else None,"target_user_id":actors[0]["id"] if row.kind=="follow" else None,
+                      "case_title":(case.title if db.get(User,case.creator_id).account_status=="active" else "Bài không còn hiển thị") if case else None,"is_read":not bool(unread),"created_at":row.created_at})
+    unread_groups = select(Notification.case_id, Notification.kind).where(Notification.recipient_id==user.id, Notification.is_read==0,Notification.actor_id.not_in(excluded)).group_by(Notification.case_id,Notification.kind).subquery()
     return {"items":items,"unread_count":db.scalar(select(func.count()).select_from(unread_groups)),"next_before_id":ids[29] if len(ids)>30 else None}
 
 class NotificationRead(BaseModel):
@@ -676,9 +692,11 @@ def read_notification(notification_id: int, user: User = Depends(current_user), 
     return {"status": "ok"}
 
 @app.get("/api/leaderboard")
-def leaderboard(db: Session = Depends(get_db)):
-    return [public_user(u) for u in db.scalars(select(User).where(User.account_status=="active",User.suspended==0,User.is_test==0).order_by(User.total_xp.desc(), User.id).limit(20))]
+def leaderboard(db: Session = Depends(get_db),viewer:User|None=Depends(optional_user)):
+    return [public_user(u) for u in db.scalars(select(User).where(User.account_status=="active",User.suspended==0,User.is_test==0,User.id.not_in(blocked_ids(db,viewer))).order_by(User.total_xp.desc(), User.id).limit(20))]
 
+app.include_router(community_router(current_user,participant,optional_user,public_user,public_case,get_case))
+app.include_router(reset_router(clean_email,password_hash))
 app.include_router(build_router(current_user,password_hash))
 
 app.include_router(moderation_router(current_user,get_case,UPLOAD_DIR))

@@ -7,9 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from PIL import Image
 from .database import get_db
-from .models import User, Case, Token, ImageReview, ContentReport, ModerationAudit
+from .models import User, Case, Token, ImageReview, ContentReport, ModerationAudit, CommentReport, Comment
 
 def build_router(current_user, get_case, upload_dir):
     router = APIRouter()
@@ -27,7 +28,7 @@ def build_router(current_user, get_case, upload_dir):
 
     @router.post('/api/cases/{case_id}/reports',status_code=201)
     def report(case_id:int,data:ReportInput,user=Depends(current_user),db:Session=Depends(get_db)):
-        case=get_case(case_id,db)
+        case=get_case(case_id,db,user)
         if db.scalar(select(func.count()).select_from(ContentReport).where(ContentReport.reporter_id==user.id,ContentReport.created_at>time.time()-3600)) >= 10:
             raise HTTPException(429,"Bạn đã gửi nhiều báo cáo. Hãy thử lại sau.")
         if db.scalar(select(ContentReport.id).where(ContentReport.case_id==case_id,ContentReport.reporter_id==user.id,ContentReport.status=="open")):
@@ -38,11 +39,29 @@ def build_router(current_user, get_case, upload_dir):
         db.commit()
         return {"message":"Đã gửi báo cáo riêng cho kiểm duyệt viên."}
 
+    @router.post('/api/comments/{comment_id}/reports',status_code=201)
+    def report_comment(comment_id:int,data:ReportInput,user=Depends(current_user),db:Session=Depends(get_db)):
+        entry=db.get(Comment,comment_id)
+        if not entry or entry.is_removed:raise HTTPException(404,'Không tìm thấy bình luận.')
+        get_case(entry.case_id,db,user)
+        from .community import is_blocked
+        if is_blocked(db,user,entry.user_id):raise HTTPException(404,'Không tìm thấy bình luận.')
+        if db.scalar(select(CommentReport.id).where(CommentReport.comment_id==comment_id,CommentReport.reporter_id==user.id)):
+            return {'message':'Báo cáo của bạn đã được ghi nhận.'}
+        count=db.scalar(select(func.count()).select_from(CommentReport).where(CommentReport.reporter_id==user.id,CommentReport.created_at>time.time()-3600))
+        if count>=10:raise HTTPException(429,'Bạn đã gửi nhiều báo cáo. Hãy thử lại sau.')
+        try:
+            with db.begin_nested():
+                db.add(CommentReport(comment_id=comment_id,reporter_id=user.id,reason=data.reason,details=data.details,created_at=time.time()));db.flush()
+        except IntegrityError:pass
+        db.commit();return {'message':'Đã gửi báo cáo bình luận cho kiểm duyệt viên.'}
+
     @router.get('/api/moderation/queue')
     def queue(offset:int=Query(0,ge=0),user=Depends(staff),db:Session=Depends(get_db)):
         images = list(db.scalars(select(ImageReview).where(ImageReview.status=="pending").order_by(ImageReview.created_at).offset(offset).limit(30)))
         cases = list(db.scalars(select(Case).where(Case.moderation_status=="pending").order_by(Case.id).offset(offset).limit(30)))
         reports = list(db.scalars(select(ContentReport).where(ContentReport.status=="open").order_by(ContentReport.id).offset(offset).limit(30)))
+        comment_reports=list(db.scalars(select(CommentReport).where(CommentReport.status=="open").order_by(CommentReport.id).offset(offset).limit(30)))
         for report in reports:
             image=db.get(ImageReview,db.get(Case,report.case_id).image_url)
             if image and image.image_url not in {item.image_url for item in images}: images.append(image)
@@ -50,6 +69,7 @@ def build_router(current_user, get_case, upload_dir):
             return {"id":c.id,"creator_id":c.creator_id,"title":c.title,"description":c.description,"image_url":c.image_url,"status":c.moderation_status}
         return {"images":[{"image_url":i.image_url,"user_id":i.user_id,"status":i.status,"scan":json.loads(i.scan)} for i in images],
                 "cases":[case_data(c) for c in cases],
+                "comment_reports":[{"id":r.id,"comment_id":r.comment_id,"reason":r.reason,"details":r.details,"content":db.get(Comment,r.comment_id).content,"case_id":db.get(Comment,r.comment_id).case_id,"author_id":db.get(Comment,r.comment_id).user_id} for r in comment_reports],
                 "reports":[{"id":r.id,"case_id":r.case_id,"reason":r.reason,"details":r.details,"case":case_data(db.get(Case,r.case_id))} for r in reports]}
 
     class Decision(BaseModel):
@@ -72,6 +92,15 @@ def build_router(current_user, get_case, upload_dir):
             item.status="resolved"
         audit(db,user,data.action,f"case:{case_id}",data.reason);db.commit()
         return {"status":case.moderation_status}
+
+    @router.post('/api/moderation/comments/{comment_id}')
+    def decide_comment(comment_id:int,data:Decision,user=Depends(staff),db:Session=Depends(get_db)):
+        entry=db.get(Comment,comment_id)
+        if not entry:raise HTTPException(404,'Không tìm thấy bình luận.')
+        if data.action=='remove':entry.is_removed=1
+        for report in db.scalars(select(CommentReport).where(CommentReport.comment_id==comment_id,CommentReport.status=='open')):report.status='resolved'
+        audit(db,user,data.action,f'comment:{comment_id}',data.reason);db.commit()
+        return {'is_removed':bool(entry.is_removed)}
 
     class ImageDecision(Decision):
         image_url: str = Field(max_length=255)

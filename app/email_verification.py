@@ -24,8 +24,8 @@ def code_digest(reference,email,purpose,code):
 def send_code(email,code,link=None):
     host,sender=os.getenv('SMTP_HOST'),os.getenv('SMTP_FROM')
     if not host or not sender: raise HTTPException(503,'Chưa cấu hình SMTP để gửi mã xác minh.')
-    message=EmailMessage();message['From']=sender;message['To']=email;message['Subject']='JinHunt — Mã xác minh email'
-    message.set_content(f'Mã xác minh email JinHunt của bạn: {code}\n\nMã hết hạn sau 10 phút, chỉ dùng một lần. Không chia sẻ mã cho người khác. Nếu bạn không yêu cầu mã này, hãy bỏ qua email.')
+    message=EmailMessage();message['From']=sender;message['To']=email;message['Subject']='JinHunt — Mã xác minh'
+    message.set_content(f'Mã xác minh JinHunt của bạn: {code}\n\nMã hết hạn sau 10 phút, chỉ dùng một lần. Không chia sẻ mã cho người khác. Nếu bạn không yêu cầu mã này, hãy bỏ qua email.')
     if link:
         message.set_content(message.get_content()+f'\nHoặc mở liên kết này để xác minh đăng ký:\n{link}\n\nChỉ xác nhận nếu chính bạn đang tạo tài khoản JinHunt. Không chuyển tiếp liên kết cho người khác.\n')
     try:

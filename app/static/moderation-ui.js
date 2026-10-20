@@ -1,19 +1,19 @@
 // Reports are private. Protected previews use Authorization, never URL tokens.
 document.body.insertAdjacentHTML('beforeend',`<dialog id="report-dialog"><button class="close">×</button><h2>Báo cáo bài viết</h2><form id="report-form"><label>Lý do<select name="reason"><option value="sexual">Nội dung nhạy cảm</option><option value="privacy">Thông tin riêng tư</option><option value="copyright">Vi phạm bản quyền</option><option value="violence">Bạo lực / nội dung nguy hiểm</option><option value="other">Lý do khác</option></select></label><label>Mô tả<textarea name="details" maxlength="1000"></textarea></label><p class="muted">Báo cáo chỉ gửi đến người kiểm duyệt; không công khai danh tính của bạn.</p><button type="submit" class="primary">Gửi báo cáo</button></form></dialog><dialog id="moderation-dialog" class="wide"><button class="close">×</button><h2>Kiểm duyệt nội dung</h2><p class="muted">Chỉ mở ảnh khi cần kiểm tra. Quét tự động có thể bỏ sót; kiểm tra cả mặt người, biển số và nội dung trước khi duyệt. Gỡ bài là ngừng công khai, chưa xóa dữ liệu lưu trữ.</p><button type="button" id="moderation-refresh" class="outline">Làm mới hàng chờ</button><div id="moderation-queue" aria-live="polite"></div><button type="button" id="moderation-next" class="outline" hidden>Trang tiếp theo</button><section id="account-moderation"><h3>Khóa / mở khóa tài khoản</h3><label>ID tài khoản<input id="moderation-user-id" type="number" min="1"></label><label>Lý do<input id="moderation-user-reason" minlength="5" maxlength="1000"></label><button type="button" id="moderation-suspend" class="outline">Khóa tài khoản</button><button type="button" id="moderation-unsuspend" class="outline">Mở khóa (quản trị viên)</button></section></dialog>`);
 setupDialog($('#report-dialog'));setupDialog($('#moderation-dialog'));
-let reportedCase=null,moderationOffset=0;
+let reportedCase=null,reportedComment=null,moderationOffset=0;
 const previewURLs=new Set();
 const reviewLabels={pending:'Chờ duyệt',approved:'Đã duyệt',removed:'Đã gỡ',scanned:'Đã quét',unavailable:'Chưa bật bộ quét',error:'Quét chưa hoàn tất',legacy:'Ảnh cũ chưa quét',manual_redaction:'Đã che thủ công',published:'Đã công khai'};
 function clearPreviews(){for(const url of previewURLs)URL.revokeObjectURL(url);previewURLs.clear();}
 $('#moderation-dialog').addEventListener('close',clearPreviews);
 document.addEventListener('click',event=>{
-  const button=event.target.closest('[data-report-case]');
+  const button=event.target.closest('[data-report-case],[data-report-comment]');
   if(!button)return;
   if(!user){$('#auth-dialog')?.showModal();return;}
-  reportedCase=Number(button.dataset.reportCase);$('#report-form').reset();$('#report-dialog').showModal();
+  reportedComment=button.dataset.reportComment?Number(button.dataset.reportComment):null;reportedCase=Number(button.dataset.reportCase);$('#report-dialog h2').textContent=reportedComment?'Báo cáo bình luận':'Báo cáo bài viết';$('#report-form').reset();$('#report-dialog').showModal();
 });
 $('#report-form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget;busy(form,async()=>{
-  const result=await api(`/cases/${reportedCase}/reports`,{method:'POST',body:Object.fromEntries(new FormData(form))});
+  const result=await api(reportedComment?`/comments/${reportedComment}/reports`:`/cases/${reportedCase}/reports`,{method:'POST',body:Object.fromEntries(new FormData(form))});
   $('#report-dialog').close();toast(result.message);
 });};
 const staffButton=document.createElement('button');staffButton.type='button';staffButton.className='text-button';staffButton.textContent='Kiểm duyệt nội dung';staffButton.hidden=true;
@@ -49,8 +49,13 @@ async function loadModeration(){
       host.append(card);card.querySelectorAll('[data-decision]').forEach(button=>button.onclick=async()=>{button.disabled=true;try{await api(`/moderation/cases/${c.id}`,{method:'POST',body:{action:button.dataset.decision,reason:card.querySelector('.review-reason').value.trim()}});await loadModeration();loadFeed();toast('Đã xử lý bài viết.');}catch(error){toast(error.message,'error');}finally{button.disabled=false;}});
     };
     result.cases.forEach(c=>renderCase(c,false));result.reports.forEach(r=>renderCase(r,true));
+    for(const report of result.comment_reports||[]){
+      const card=document.createElement('section');card.className='moderation-card';
+      card.innerHTML=`<h3>Báo cáo bình luận #${report.comment_id}</h3><p>Bài #${report.case_id} · Tác giả #${report.author_id}</p><blockquote>${esc(report.content)}</blockquote><p>${esc(report.reason)} · ${esc(report.details)}</p><label>Lý do quyết định<input class="review-reason" maxlength="1000"></label><div class="moderation-actions"><button class="outline" data-decision="approve">Giữ bình luận / đóng báo cáo</button><button class="outline" data-decision="remove">Gỡ bình luận</button></div>`;
+      host.append(card);card.querySelectorAll('[data-decision]').forEach(button=>button.onclick=async()=>{button.disabled=true;try{await api(`/moderation/comments/${report.comment_id}`,{method:'POST',body:{action:button.dataset.decision,reason:card.querySelector('.review-reason').value.trim()}});await loadModeration();toast('Đã xử lý bình luận.');}catch(error){toast(error.message,'error');}finally{button.disabled=false;}});
+    }
     if(!host.children.length)host.textContent='Không còn nội dung trong hàng chờ này.';
-    $('#moderation-next').hidden=result.cases.length<30&&result.reports.length<30&&result.images.length<30;
+    $('#moderation-next').hidden=result.cases.length<30&&result.reports.length<30&&result.images.length<30&&(result.comment_reports||[]).length<30;
     $('#moderation-unsuspend').hidden=user?.role!=='admin';
   }catch(error){host.textContent='Chưa tải được hàng chờ. Bấm Làm mới để thử lại.';toast(error.message,'error');}
 }

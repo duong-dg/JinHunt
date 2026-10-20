@@ -160,6 +160,7 @@ class Comment(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     content = Column(Text, nullable=False)
     is_hidden = Column(Integer, default=0, nullable=False)
+    is_removed = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 
 class Attempt(Base):
@@ -189,7 +190,7 @@ class Notification(Base):
     id = Column(Integer, primary_key=True)
     recipient_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     actor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False)
+    case_id = Column(Integer, ForeignKey("cases.id"), nullable=True)
     kind = Column(String(20), nullable=False)
     is_read = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
@@ -222,3 +223,36 @@ class DailyReward(Base):
     kind = Column(String(20), nullable=False)
     points = Column(Integer, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class Follow(Base):
+    __tablename__ = "follows"
+    __table_args__ = (UniqueConstraint("user_id", "target_id"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    target_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+class UserBlock(Base):
+    __tablename__ = "user_blocks"
+    __table_args__ = (UniqueConstraint("user_id", "target_id"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    target_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+class Bookmark(Base):
+    __tablename__ = "bookmarks"
+    __table_args__ = (UniqueConstraint("user_id", "case_id"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False)
+
+class CommentReport(Base):
+    __tablename__ = "comment_reports"
+    __table_args__ = (UniqueConstraint("reporter_id", "comment_id"),)
+    id = Column(Integer, primary_key=True)
+    reporter_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    comment_id = Column(Integer, ForeignKey("comments.id"), nullable=False)
+    reason = Column(String(40), nullable=False)
+    details = Column(String(1000), nullable=False, default="")
+    status = Column(String(20), nullable=False, default="open")
+    created_at = Column(Float, nullable=False)
