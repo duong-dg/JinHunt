@@ -677,7 +677,7 @@ def read_notification(notification_id: int, user: User = Depends(current_user), 
 
 @app.get("/api/leaderboard")
 def leaderboard(db: Session = Depends(get_db)):
-    return [public_user(u) for u in db.scalars(select(User).where(User.account_status=="active",User.suspended==0).order_by(User.total_xp.desc(), User.id).limit(20))]
+    return [public_user(u) for u in db.scalars(select(User).where(User.account_status=="active",User.suspended==0,User.is_test==0).order_by(User.total_xp.desc(), User.id).limit(20))]
 
 app.include_router(build_router(current_user,password_hash))
 

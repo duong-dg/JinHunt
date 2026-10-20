@@ -3,6 +3,16 @@ from datetime import datetime, timezone, timedelta
 
 TIERS=((50,"diamond","Kim cương"),(30,"platinum","Bạch kim"),(20,"gold","Vàng"),(10,"silver","Bạc"),(5,"bronze","Đồng"),(1,"none","Khởi hành"))
 
+def xp_for_level(level):
+    if not isinstance(level,int) or isinstance(level,bool) or not 1<=level<=50:
+        raise ValueError("Cấp test phải từ 1 đến 50.")
+    total,needed=0,200
+    for _ in range(level-1):
+        total+=needed
+        needed=(needed*115+99)//100
+    return total
+
+
 def progression(xp):
     xp=max(0,int(xp or 0))
     level,floor,needed=1,0,200

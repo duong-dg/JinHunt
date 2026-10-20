@@ -16,7 +16,7 @@ def upgrade(engine):
         additions = {"player_birth_date": "DATE", "account_status": "VARCHAR(30) NOT NULL DEFAULT 'active'", "guardian_managed": "INTEGER NOT NULL DEFAULT 0"}
         additions.update(role="VARCHAR(20) NOT NULL DEFAULT 'user'", suspended="INTEGER NOT NULL DEFAULT 0")
         additions.update(staff_totp_secret="TEXT",staff_totp_counter="INTEGER NOT NULL DEFAULT -1")
-        additions.update(email_verified="INTEGER NOT NULL DEFAULT 0")
+        additions.update(email_verified="INTEGER NOT NULL DEFAULT 0",is_test="INTEGER NOT NULL DEFAULT 0")
         for name, definition in additions.items():
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))

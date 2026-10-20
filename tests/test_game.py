@@ -699,3 +699,33 @@ def test_avatar_level_metadata_in_posts_and_comments(client):
     path=f'/api/cases/{post["id"]}/comments'
     client.post(path,headers=owner,json={'content':'Welcome everyone'})
     assert client.get(path).json()[0]['level']==5
+
+
+def test_server_test_accounts_can_set_level_without_affecting_real_users(client):
+    from app.test_account import change_test_account
+    from app.models import User, LegalConsent
+    import pytest
+    real=account(client,'realplayer')
+    with next(app.dependency_overrides[get_db]()) as db:
+        result=change_test_account(db,'create','jhtest_demo',5,True,'test-password-123')
+        assert result['xp']==999 and result['level']==4
+        person=db.scalar(select(User).where(User.username=='jhtest_demo'))
+        assert person.is_test==1 and person.role=='user' and not person.email_verified
+        assert person.player_birth_date is None
+        assert db.scalar(select(LegalConsent).where(LegalConsent.user_id==person.id)) is None
+        old_password=person.password_hash
+        with pytest.raises(ValueError):change_test_account(db,'create','jhtest_demo',50,password='different-password')
+        result=change_test_account(db,'set-level','jhtest_demo',50)
+        assert result['level']==50 and result['avatar_frame']=='diamond'
+        assert person.password_hash==old_password
+        with pytest.raises(ValueError):change_test_account(db,'set-level','realplayer',50)
+        with pytest.raises(ValueError):change_test_account(db,'create','jhtest_bad',1,True,'test-password-123')
+        with pytest.raises(ValueError):change_test_account(db,'create','jhtest_bad',51,password='test-password-123')
+    login=client.post('/api/auth/login',json={'username':'jhtest_demo','password':'test-password-123'})
+    assert login.status_code==200
+    assert login.json()['user']['needs_legal_consent'] is True
+    assert login.json()['user']['level']==50
+    leaderboard=client.get('/api/leaderboard').json()
+    assert 'jhtest_demo' not in [u['username'] for u in leaderboard]
+    assert 'realplayer' in [u['username'] for u in leaderboard]
+    assert client.patch('/api/me',headers=real,json={'is_test':1,'total_xp':1000}).status_code==422

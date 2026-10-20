@@ -8,6 +8,7 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     total_xp = Column(Integer, default=0, nullable=False)
+    is_test = Column(Integer, default=0, nullable=False)
     display_name = Column(String(80), nullable=True)
     bio = Column(String(500), nullable=True)
     avatar_url = Column(String(255), nullable=True)
