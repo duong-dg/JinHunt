@@ -256,3 +256,16 @@ class CommentReport(Base):
     details = Column(String(1000), nullable=False, default="")
     status = Column(String(20), nullable=False, default="open")
     created_at = Column(Float, nullable=False)
+
+
+class LoginSession(Base):
+    __tablename__ = "login_sessions"
+    id = Column(String(32), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    login_at = Column(Float, nullable=True)
+    last_seen_at = Column(Float, nullable=False)
+    expires_at = Column(Float, nullable=False)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(String(500), nullable=False, default="")
+    ended_at = Column(Float, nullable=True)

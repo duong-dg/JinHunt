@@ -412,7 +412,7 @@ async function openCase(id, discussion = false) {
   } catch (error) { toast(error.message,'error'); }
 }
 function setupDialog(dialog) {
-  const close = dialog.querySelector('.close'); close.textContent = 'Đóng ×'; close.type = 'button'; close.setAttribute('aria-label','Quay lại');
+  const close=dialog.querySelector('.close');close.innerHTML='<svg class="close-x" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg><svg class="close-back" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>';close.type='button';close.setAttribute('aria-label','Đóng');
   const top = document.createElement('div'); top.className = 'dialog-top'; close.before(top); top.append(close);
   if (dialog.id === 'profile-dialog') {
     top.prepend(dialog.querySelector('h2'));

@@ -224,3 +224,72 @@ def test_notification_migration_preserves_history_and_supports_follows():
         db.add(notice);db.commit()
         assert notice.id>17 and notice.case_id is None
     engine.dispose()
+
+
+def test_change_password_requires_current_password_and_revokes_old_sessions(client):
+    owner=account(client,'changepassword')
+    request=request_recovery(client,'changepassword@example.com').json();code=client.email_codes[-1][1]
+    assert client.post('/api/me/password',json={'current_password':'test-password-123','new_password':'next-password-123'}).status_code==401
+    assert client.post('/api/me/password',headers=owner,json={'current_password':'wrong-password-123','new_password':'next-password-123'}).status_code==400
+    assert client.get('/api/me',headers=owner).status_code==200
+    assert client.post('/api/me/password',headers=owner,json={'current_password':'test-password-123','new_password':'test-password-123'}).status_code==400
+    changed=client.post('/api/me/password',headers=owner,json={'current_password':'test-password-123','new_password':'next-password-123'})
+    assert changed.status_code==200
+    assert client.get('/api/me',headers=owner).status_code==401
+    assert client.post('/api/auth/password-reset/confirm',json={'challenge_id':request['challenge_id'],'code':code,'new_password':'stale-code-password'}).status_code==400
+    assert client.post('/api/auth/login',json={'username':'changepassword','password':'test-password-123'}).status_code==401
+    assert client.post('/api/auth/login',json={'username':'changepassword','password':'next-password-123'}).status_code==200
+    staff=staff_account(client,'changestaff')
+    assert client.post('/api/me/password',headers=staff,json={'current_password':'test-password-123','new_password':'next-password-123'}).status_code==403
+
+
+def test_device_sessions_are_private_revocable_and_keep_history(client):
+    owner=account(client,'deviceowner');other=account(client,'deviceother')
+    login=client.post('/api/auth/login',json={'username':'deviceowner','password':'test-password-123'},headers={'user-agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17 Mobile Safari/604.1','X-Forwarded-For':'8.8.8.8'})
+    second={'Authorization':'Bearer '+login.json()['token']}
+    listing=client.get('/api/me/sessions',headers=owner)
+    assert listing.status_code==200 and listing.headers['cache-control']=='no-store'
+    rows=listing.json()['items']
+    assert len(rows)==2 and sum(r['is_current'] for r in rows)==1
+    safari=next(r for r in rows if 'iPhone' in r['device'])
+    assert 'Safari' in safari['device'] and safari['active'] and not safari['is_current']
+    assert safari['login_at'] and safari['ip_address'] is None
+    assert not any('token_hash' in r or 'user_agent' in r for r in rows)
+    assert login.json()['token'] not in listing.text
+    assert client.delete(f'/api/me/sessions/{safari["id"]}',headers=other).status_code==404
+    assert client.get('/api/me/sessions').status_code==401
+    assert client.delete(f'/api/me/sessions/{safari["id"]}',headers=owner).status_code==200
+    assert client.get('/api/me',headers=second).status_code==401
+    history=client.get('/api/me/sessions',headers=owner).json()['items']
+    assert next(r for r in history if r['id']==safari['id'])['active'] is False
+    third=client.post('/api/auth/login',json={'username':'deviceowner','password':'test-password-123'}).json()['token']
+    assert client.post('/api/me/sessions/revoke-others',headers=owner).status_code==200
+    assert client.get('/api/me',headers={'Authorization':'Bearer '+third}).status_code==401
+    assert client.get('/api/me',headers=owner).status_code==200
+    current=next(r for r in client.get('/api/me/sessions',headers=owner).json()['items'] if r['is_current'])
+    assert client.delete(f'/api/me/sessions/{current["id"]}',headers=owner).status_code==200
+    assert client.get('/api/me',headers=owner).status_code==401
+
+
+def test_legacy_session_is_observed_without_faking_login_date(client):
+    import hashlib,time
+    from app.models import Token
+    owner=account(client,'legacydevice');uid=client.get('/api/me',headers=owner).json()['id']
+    raw='legacy-session-for-test'
+    with next(app.dependency_overrides[get_db]()) as db:
+        db.add(Token(token_hash=hashlib.sha256(raw.encode()).hexdigest(),user_id=uid,expires_at=time.time()+3600));db.commit()
+    headers={'Authorization':'Bearer '+raw,'User-Agent':'Mozilla/5.0 (Windows NT 10.0) Chrome/120.0.0.0'}
+    result=client.get('/api/me/sessions',headers=headers).json()['items']
+    current=next(r for r in result if r['is_current'])
+    assert current['login_at'] is None and current['last_seen_at']
+    assert current['device']=='Chrome · Windows'
+    assert client.get('/api/me/sessions?offset=-1',headers=headers).status_code==400
+
+
+def test_device_ip_uses_asgi_address_not_forwarded_header():
+    from types import SimpleNamespace
+    from app.login_sessions import client_ip,device_name
+    request=SimpleNamespace(client=SimpleNamespace(host='8.8.8.8'),headers={'X-Forwarded-For':'1.2.3.4'})
+    assert client_ip(request)=='8.8.8.8'
+    assert client_ip(SimpleNamespace(client=SimpleNamespace(host='not-an-ip'))) is None
+    assert device_name('Mozilla/5.0 (Windows NT 10.0) Edg/120')=='Edge · Windows'

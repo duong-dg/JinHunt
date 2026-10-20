@@ -34,3 +34,23 @@ Các bảng follows, user_blocks, bookmarks, comment_reports và cột comments.
 Theo dõi tạo thông báo trong app cho người được theo dõi, không gửi email/push hệ điều hành. Những người theo dõi mới được gộp thành một nhóm, tên mới nhất đứng đầu; bấm nhóm mở hồ sơ người mới nhất, bấm tên/avatar cụ thể mở đúng hồ sơ đó. Trạng thái chưa đọc tính theo nhóm, đánh dấu đã đọc theo mốc đã xem. Theo dõi lặp, bỏ rồi theo dõi lại không tạo thông báo mới cho cùng cặp người dùng. Không tạo thông báo ngược cho lượt theo dõi đã có trước khi nâng cấp. Người bị chặn không xuất hiện trong nhóm.
 
 notifications.case_id được đổi thành nullable để thông báo theo dõi không cần bài viết giả. PostgreSQL dùng ALTER COLUMN; SQLite chuyển bảng có bảo toàn ID, nội dung và trạng thái đã đọc rồi tạo lại index. Chạy lại migration không tạo bản sao thông báo.
+
+
+## Cài đặt cá nhân
+
+Mở icon bánh răng ở góc trên bên phải thẻ hồ sơ của mình. Menu có bảng tin Đang theo dõi, Đổi mật khẩu, Tài khoản đã chặn; công tắc Chế độ tối luôn ở cuối. Công tắc lưu chế độ sáng/tối trên trình duyệt, không đổi dữ liệu tài khoản. Trước khi chọn lần đầu, giao diện vẫn theo thiết bị.
+
+Đổi mật khẩu khi đăng nhập yêu cầu mật khẩu hiện tại, mật khẩu mới tối thiểu 8 ký tự và nhập lại cho khớp. Sau khi đổi, thu hồi mọi token cũ và mã khôi phục chưa dùng. Quy trình tài khoản quản trị vẫn tách riêng. API POST /api/me/password không chấp nhận đổi mật khẩu bằng thông tin công khai.
+
+
+## Giao diện mở rộng và thiết bị đăng nhập
+
+Đang theo dõi hiển thị ngoài cài đặt, dưới thanh tìm kiếm. Bấm số Người theo dõi / Đang theo dõi trên hồ sơ để mở danh sách tương ứng, cả hồ sơ của mình và người khác.
+
+Cài đặt chia ba nhóm: Giao diện, Bảo mật & quyền riêng tư, Quản lý thiết bị. Giao diện có công tắc tối, mẫu Biển xanh/Hồng/Chibi và phông mặc định/bo tròn/có chân. Chibi là kiểu pastel với góc bo và nền họa tiết; không tải ảnh hoặc phông từ bên thứ ba. Lưu lựa chọn bằng localStorage trên thiết bị, không tự đồng bộ qua tài khoản.
+
+Thiết bị là từng phiên đăng nhập của trình duyệt, không phải định danh vật lý chắc chắn. Tên thiết bị suy ra từ User-Agent. Lưu thời điểm đăng nhập, hoạt động gần nhất (cập nhật tối đa mỗi 5 phút), IP và thời hạn phiên trong login_sessions. Không trả token/token_hash cho giao diện. Chủ tài khoản có thể đăng xuất từng phiên hoặc tất cả phiên khác. Phiên kết thúc vẫn hiện trong lịch sử; không tự xóa lịch sử trong bản này.
+
+Vị trí hiện hiển thị IP và trạng thái mạng nội bộ/chưa xác định địa điểm. Không giả tên thành phố, không tự bật GPS và không gửi IP tới dịch vụ GeoIP bên ngoài. Khi có reverse proxy, địa chỉ ASGI phụ thuộc cấu hình tin cậy proxy của Uvicorn/hạ tầng; ứng dụng không tự tin X-Forwarded-For do client gửi. Nếu IP chỉ là IP Docker/proxy, cần cấu hình proxy tin cậy đúng với môi trường triển khai; không mở tin cậy mọi nguồn tùy tiện.
+
+Phiên cũ được ghi nhận ở lần sử dụng sau nâng cấp, thời điểm đăng nhập để trống vì không có dữ liệu lịch sử; IP/thiết bị là thông tin quan sát lần đó. Không truy dựng nơi đăng nhập cũ. Các lần đăng nhập/đăng ký mới được ghi ngay khi cấp token. Bảng mới tạo tự động khi khởi động.

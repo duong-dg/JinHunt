@@ -6,12 +6,12 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, update, delete
 from sqlalchemy.orm import Session
 from .database import get_db
-from .models import User, Token, EmailVerification
-from .auth_security import throttle
+from .models import User, Token, EmailVerification, LoginSession
+from .auth_security import throttle, check_password
 from .email_verification import issue_code, verify_code
 
 
-def build_router(clean_email,password_hash):
+def build_router(clean_email,password_hash,current_user):
     router=APIRouter()
     class Address(BaseModel):
         email:str=Field(min_length=3,max_length=254)
@@ -25,6 +25,24 @@ def build_router(clean_email,password_hash):
         challenge_id:str=Field(min_length=16,max_length=64)
         code:str=Field(pattern=r'^[0-9]{6}$')
         new_password:str=Field(min_length=8,max_length=128)
+
+    class ChangePassword(BaseModel):
+        current_password:str=Field(min_length=8,max_length=128)
+        new_password:str=Field(min_length=8,max_length=128)
+
+    @router.post('/api/me/password')
+    def change_password(data:ChangePassword,user=Depends(current_user),db:Session=Depends(get_db)):
+        if user.role!='user':raise HTTPException(403,'Tài khoản quản trị cần dùng quy trình quản trị riêng.')
+        throttle(db,'password-change',str(user.id),5)
+        person=db.scalar(select(User).where(User.id==user.id).with_for_update().execution_options(populate_existing=True))
+        if not check_password(person,data.current_password,password_hash):raise HTTPException(400,'Mật khẩu hiện tại chưa đúng.')
+        if data.current_password==data.new_password:raise HTTPException(400,'Hãy chọn mật khẩu khác mật khẩu hiện tại.')
+        person.password_hash=password_hash(data.new_password)
+        db.execute(update(LoginSession).where(LoginSession.user_id==person.id,LoginSession.ended_at.is_(None)).values(ended_at=time.time()))
+        db.execute(delete(Token).where(Token.user_id==person.id))
+        db.execute(update(EmailVerification).where(EmailVerification.user_id==person.id,EmailVerification.purpose=='password_reset').values(expires_at=0))
+        db.commit()
+        return {'message':'Đã đổi mật khẩu và đăng xuất các phiên cũ. Hãy đăng nhập lại.'}
 
     @router.post('/api/auth/password-reset/request')
     def request_reset(data:Address,request:Request,db:Session=Depends(get_db)):
@@ -57,6 +75,7 @@ def build_router(clean_email,password_hash):
         claimed=db.execute(update(EmailVerification).where(EmailVerification.id==row.id,EmailVerification.consumed_at.is_(None),EmailVerification.expires_at>time.time()).values(consumed_at=time.time())).rowcount
         if not claimed:raise HTTPException(400,'Mã đã dùng hoặc hết hạn.')
         person.password_hash=password_hash(data.new_password)
+        db.execute(update(LoginSession).where(LoginSession.user_id==person.id,LoginSession.ended_at.is_(None)).values(ended_at=time.time()))
         db.execute(delete(Token).where(Token.user_id==person.id))
         db.execute(update(EmailVerification).where(EmailVerification.purpose=='password_reset',EmailVerification.user_id==person.id).values(expires_at=0))
         db.commit()

@@ -22,9 +22,10 @@ from sqlalchemy import select, func, update, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
-from .models import ModerationAudit, User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation, ImageReview, PointAward, CaseShare, DailyReward, Bookmark, Follow
+from .models import ModerationAudit, User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation, ImageReview, PointAward, CaseShare, DailyReward, Bookmark, Follow, LoginSession
 from .community import build_router as community_router, visible_cases, blocked_ids, is_blocked
 from .password_reset import build_router as reset_router
+from .login_sessions import build_router as session_router, record_session, touch_session
 from .progression import progression, local_day
 from .migrations import upgrade
 from .image_safety import scan_image
@@ -89,6 +90,7 @@ def current_user(request: Request, authorization: str = Header(default=""), staf
         raise HTTPException(401,"Tài khoản quản trị cần đăng nhập qua /staff/login với mã OTP.")
     if user.account_status != "active" or user.suspended:
         raise HTTPException(403,"Tài khoản chưa được kích hoạt hoặc đã dừng. Hãy kiểm tra xác nhận người đại diện hoặc liên hệ hỗ trợ.")
+    touch_session(db,request,token)
     return user
 
 def participant(user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -285,9 +287,10 @@ def password_hash(password, salt=None):
     digest = hashlib.scrypt(password.encode(), salt=salt.encode(), n=16384, r=8, p=1).hex()
     return f"{salt}:{digest}"
 
-def session_response(user, db):
+def session_response(user, db, request=None):
     raw = secrets.token_urlsafe(32)
-    db.add(Token(token_hash=hashlib.sha256(raw.encode()).hexdigest(), user_id=user.id, expires_at=time.time() + 86400 * 7))
+    session=Token(token_hash=hashlib.sha256(raw.encode()).hexdigest(), user_id=user.id, expires_at=time.time() + 86400 * 7)
+    db.add(session);record_session(db,request,session)
     db.commit()
     return {"token": raw, "user": private_user(user,db)}
 
@@ -305,7 +308,7 @@ def health(db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 @app.post("/api/auth/register", status_code=201)
-def register(data: Registration, db: Session = Depends(get_db)):
+def register(data: Registration, request:Request, db: Session = Depends(get_db)):
     minor = age(data.player_birth_date)<18
     if not minor and data.email:
         if db.scalar(select(User.id).where((User.email==data.email)|(User.username==data.username.lower()))):
@@ -326,7 +329,7 @@ def register(data: Registration, db: Session = Depends(get_db)):
         db.commit()
         return {"status":"pending_guardian","message":"Yêu cầu xác nhận đã gửi qua email người đại diện. Chưa thể đăng nhập; người đại diện cần đọc chính sách và đặt mật khẩu quản lý."}
     record_consent(db,user)
-    return session_response(user, db)
+    return session_response(user, db, request)
 
 @app.post("/api/auth/login")
 def login(data: Credentials, request: Request, db: Session = Depends(get_db)):
@@ -351,11 +354,12 @@ def login(data: Credentials, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(403,"Tài khoản đang chờ người đại diện xác nhận hoặc đã dừng. Hãy kiểm tra email người đại diện/liên hệ hỗ trợ.")
     if user.role in {"admin","moderator"}:
         raise HTTPException(403,"Tài khoản quản trị dùng trang /staff/login và mã xác thực OTP.")
-    return session_response(user, db)
+    return session_response(user, db, request)
 
 @app.post("/api/auth/logout", status_code=204)
 def logout(user: User = Depends(current_user), authorization: str = Header(), db: Session = Depends(get_db)):
     token = db.get(Token, hashlib.sha256(authorization[7:].encode()).hexdigest())
+    db.execute(update(LoginSession).where(LoginSession.token_hash==token.token_hash).values(ended_at=time.time()))
     db.delete(token)
     db.commit()
 
@@ -696,7 +700,8 @@ def leaderboard(db: Session = Depends(get_db),viewer:User|None=Depends(optional_
     return [public_user(u) for u in db.scalars(select(User).where(User.account_status=="active",User.suspended==0,User.is_test==0,User.id.not_in(blocked_ids(db,viewer))).order_by(User.total_xp.desc(), User.id).limit(20))]
 
 app.include_router(community_router(current_user,participant,optional_user,public_user,public_case,get_case))
-app.include_router(reset_router(clean_email,password_hash))
+app.include_router(reset_router(clean_email,password_hash,current_user))
+app.include_router(session_router(current_user))
 app.include_router(build_router(current_user,password_hash))
 
 app.include_router(moderation_router(current_user,get_case,UPLOAD_DIR))
@@ -736,7 +741,8 @@ def staff_login(data:StaffCredentials,request:Request,db:Session=Depends(get_db)
     if not consume_totp(db,user,data.otp):
         raise HTTPException(401,'Thông tin đăng nhập hoặc mã xác thực chưa đúng.')
     raw=secrets.token_urlsafe(32)
-    db.add(Token(token_hash=hashlib.sha256(raw.encode()).hexdigest(),user_id=user.id,expires_at=time.time()+8*3600,staff_verified=1))
+    session=Token(token_hash=hashlib.sha256(raw.encode()).hexdigest(),user_id=user.id,expires_at=time.time()+8*3600,staff_verified=1)
+    db.add(session);record_session(db,request,session)
     db.add(ModerationAudit(actor_id=user.id,action='staff_login',target=f'user:{user.id}',reason='Password and TOTP verified',created_at=time.time()))
     db.commit()
     response=JSONResponse({'status':'ok'},headers={'Cache-Control':'no-store'})
