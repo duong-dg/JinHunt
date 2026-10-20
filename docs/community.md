@@ -54,3 +54,8 @@ Thiết bị là từng phiên đăng nhập của trình duyệt, không phải
 Vị trí hiện hiển thị IP và trạng thái mạng nội bộ/chưa xác định địa điểm. Không giả tên thành phố, không tự bật GPS và không gửi IP tới dịch vụ GeoIP bên ngoài. Khi có reverse proxy, địa chỉ ASGI phụ thuộc cấu hình tin cậy proxy của Uvicorn/hạ tầng; ứng dụng không tự tin X-Forwarded-For do client gửi. Nếu IP chỉ là IP Docker/proxy, cần cấu hình proxy tin cậy đúng với môi trường triển khai; không mở tin cậy mọi nguồn tùy tiện.
 
 Phiên cũ được ghi nhận ở lần sử dụng sau nâng cấp, thời điểm đăng nhập để trống vì không có dữ liệu lịch sử; IP/thiết bị là thông tin quan sát lần đó. Không truy dựng nơi đăng nhập cũ. Các lần đăng nhập/đăng ký mới được ghi ngay khi cấp token. Bảng mới tạo tự động khi khởi động.
+
+
+### Mở khóa giao diện theo cấp
+
+Mặc định mọi tài khoản và khách chỉ dùng Biển xanh với phông mặc định, có thể bật/tắt tối. Từ Level 20, API tài khoản trả can_customize_appearance=true và mở các màu Hồng/Chibi cùng lựa chọn phông. Đây là tùy chỉnh hiển thị cục bộ, không phải cơ chế bảo vệ dữ liệu hay phần thưởng XP. Theme/font đã lưu không được áp dụng trước khi xác nhận cấp từ server; đăng xuất hoặc dùng tài khoản chưa đủ cấp sẽ trở về giao diện mặc định, vẫn giữ lựa chọn sáng/tối. Mốc mở khóa trả về ở appearance_unlock_level.

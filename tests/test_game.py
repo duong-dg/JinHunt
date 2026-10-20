@@ -735,3 +735,20 @@ def test_server_test_accounts_can_set_level_without_affecting_real_users(client)
     assert 'jhtest_demo' not in [u['username'] for u in leaderboard]
     assert 'realplayer' in [u['username'] for u in leaderboard]
     assert client.patch('/api/me',headers=real,json={'is_test':1,'total_xp':1000}).status_code==422
+
+
+def test_custom_appearance_unlocks_at_level_twenty(client):
+    from app.progression import xp_for_level
+    from app.models import User
+    headers=account(client,'appearancelevel')
+    result=client.get('/api/me',headers=headers).json()
+    assert result['appearance_unlock_level']==20
+    assert result['can_customize_appearance'] is False
+    with next(app.dependency_overrides[get_db]()) as db:
+        person=db.scalar(select(User).where(User.username=='appearancelevel'))
+        person.total_xp=xp_for_level(20)-1;db.commit()
+    assert client.get('/api/me',headers=headers).json()['can_customize_appearance'] is False
+    with next(app.dependency_overrides[get_db]()) as db:
+        person=db.scalar(select(User).where(User.username=='appearancelevel'))
+        person.total_xp=xp_for_level(20);db.commit()
+    assert client.get('/api/me',headers=headers).json()['can_customize_appearance'] is True

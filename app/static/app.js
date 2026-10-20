@@ -211,6 +211,7 @@ function celebrateLevel(){
   celebrationTimer=setTimeout(dismissLevelCelebration,12000);
 }
 function renderUser() {
+  window.jinhuntTheme?.setEligibility(Boolean(user?.can_customize_appearance));
   celebrateLevel();
   if($('#review-consent')) $('#review-consent').textContent=user?.needs_legal_consent ? 'Xác nhận điều khoản tài khoản' : 'Điều khoản đã đồng ý ↗';
   window.renderEmailVerification?.();

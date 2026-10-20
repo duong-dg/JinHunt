@@ -407,7 +407,8 @@ html[data-theme=dark] #journey-name[data-rank=legend]{color:#ffe29a}
 .session-state{font-size:11px;color:#6c8791;background:#e8f0f3;border-radius:10px;padding:3px 7px;white-space:nowrap}.session-active .session-state{color:#217b70;background:#e0f4ed}.login-session button{font-size:12px;padding:3px 0;min-height:36px}
 html[data-font=system]{--app-font:system-ui,-apple-system,'Segoe UI',sans-serif}
 html[data-font=rounded]{--app-font:ui-rounded,'Arial Rounded MT Bold','Trebuchet MS',system-ui,sans-serif}
-html[data-font=serif]{--app-font:Georgia,'Times New Roman',serif}
+@font-face{font-family:'JinHunt Serif';src:url('/static/fonts/NotoSerif-Variable.ttf') format('truetype');font-weight:100 900;font-style:normal;font-display:swap}
+html[data-font=serif]{--app-font:'JinHunt Serif',system-ui,sans-serif}
 html[data-font] :is(body,button,input,textarea,select){font-family:var(--app-font)}
 html[data-palette=rose]{--theme-accent:#af3f78;--theme-deep:#924481;--theme-soft:#fff0f5;--theme-line:#edccd9}
 html[data-palette=chibi]{--theme-accent:#8556b0;--theme-deep:#6578b4;--theme-soft:#f8efff;--theme-line:#dfceed}
@@ -439,3 +440,27 @@ html[data-palette=chibi]{--theme-dark-ink:#d6bef3;--theme-dark-soft:#35324d}
 html:is([data-palette=rose],[data-palette=chibi])[data-theme=dark] :is(.brand,.text-button,.sidebar nav button,.following-shortcut){color:var(--theme-dark-ink)}
 html:is([data-palette=rose],[data-palette=chibi])[data-theme=dark] :is(.sidebar nav button.active,.following-shortcut[aria-pressed=true]){background:var(--theme-dark-soft);color:var(--theme-dark-ink)}
 @media(max-width:520px){html:is([data-palette=rose],[data-palette=chibi])[data-theme=light] .sidebar nav #create{color:var(--theme-accent)}html:is([data-palette=rose],[data-palette=chibi])[data-theme=dark] .sidebar nav #create{color:var(--theme-dark-ink)}}
+
+/* Dialog headers share their panel surface; no dark strip behind close. */
+dialog .dialog-top,#profile-dialog .dialog-top{background:inherit;border-bottom:0;box-shadow:none}
+html[data-theme=dark] dialog .dialog-top,html[data-theme=dark] #profile-dialog .dialog-top{background:inherit;border-bottom:0;box-shadow:none}
+.appearance-lock{font-size:12px;line-height:1.6;color:#718a96;margin:0 0 16px}.appearance-lock[hidden]{display:none}
+.palette-choices button:disabled{opacity:.45;cursor:not-allowed}
+html[data-theme=dark] .appearance-lock{color:#9cb9c7}
+/* Keep primary text distinct from a selected color theme. */
+html:is([data-palette=rose],[data-palette=chibi]) .primary{color:#fff}
+html:is([data-palette=rose],[data-palette=chibi]) .sidebar nav #create{color:#fff}
+html:is([data-palette=rose],[data-palette=chibi]) #create-form .primary{background:linear-gradient(115deg,var(--theme-accent),var(--theme-deep));color:#fff;border-color:var(--theme-accent)}
+html[data-theme=dark] :is(#create-dialog,#settings-dialog){background:#182c38}
+@media(max-width:520px){html:is([data-palette=rose],[data-palette=chibi])[data-theme=light] .sidebar nav #create{color:var(--theme-accent)}html:is([data-palette=rose],[data-palette=chibi])[data-theme=dark] .sidebar nav #create{color:var(--theme-dark-ink)}}
+
+html[data-font=serif] body{font-kerning:normal;line-height:1.65}
+html[data-font=serif] :is(h1,h2,h3,.rank-name,.post-description,.comment-body p){letter-spacing:normal}
+html[data-font=serif] :is(.brand,.mobile-brand .brand){font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
+html[data-font=serif] :is(input,textarea,select){line-height:1.6}
+
+@media(max-width:520px){
+  html[data-palette] .sidebar nav button.active{border-top-color:var(--theme-accent,#11a9c2);box-shadow:none}
+  html:is([data-palette=rose],[data-palette=chibi])[data-theme=light] .sidebar nav button.active{border-top-color:var(--theme-accent);box-shadow:none;background:transparent;color:var(--theme-accent)}
+  html:is([data-palette=rose],[data-palette=chibi])[data-theme=dark] .sidebar nav button.active{border-top-color:var(--theme-dark-ink);box-shadow:none;background:transparent;color:var(--theme-dark-ink)}
+}
