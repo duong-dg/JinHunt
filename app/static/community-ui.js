@@ -56,3 +56,19 @@ $('#password-reset-confirm').onsubmit=event=>{event.preventDefault();const form=
 const profileLink=new URLSearchParams(location.search).get('user');if(profileLink&&/^[1-9][0-9]*$/.test(profileLink))openPerson(Number(profileLink));
 
 window.renderOwnSocial=async()=>{const id=user?.id;if(!id)return;try{const person=await api(`/users/${id}`);if(page!=='profile'||user?.id!==id)return;const box=$('#timeline-profile>div');if(!box)return;box.querySelector('.profile-counts')?.remove();box.insertAdjacentHTML('beforeend',`<div class="profile-counts"><button type="button" id="own-followers">${person.followers} người theo dõi</button><button type="button" id="own-following">${person.following} đang theo dõi</button></div>`);$('#own-followers').onclick=()=>showPeople('followers',id);$('#own-following').onclick=()=>showPeople('following',id);}catch{}};
+
+// Personal shortcuts keep the mobile bottom bar to five items.
+function addProfileShortcuts(){
+  const actions=$('#timeline-profile .timeline-actions');if(page!=='profile'||!actions||actions.querySelector('#profile-settings'))return;
+  actions.classList.add('profile-tools');
+  actions.insertAdjacentHTML('beforeend',`<button type="button" class="outline" id="profile-saved">${icon('bookmark')} Đã lưu</button><button type="button" class="outline" id="profile-settings">${icon('settings')} Cài đặt</button>`);
+  $('#profile-saved').onclick=()=>$('#saved-posts').click();
+  $('#profile-settings').onclick=()=>{const mode=window.jinhuntTheme?.get()||'system';$('#theme-mode').value=mode;$('#settings-dialog').showModal();};
+}
+iconPaths.settings='M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM10 2h4l1 3 3 1 3 1v4l-2 2 1 3-3 3-3-1-2 3H8l-1-3-3-1-2-3 2-3-1-3 3-2 1-3Z';
+document.body.insertAdjacentHTML('beforeend','<dialog id="settings-dialog"><button class="close" aria-label="Đóng cài đặt">×</button><h2>Cài đặt</h2><label class="theme-setting" for="theme-mode">Giao diện<select id="theme-mode"><option value="system">Theo thiết bị</option><option value="light">Sáng</option><option value="dark">Tối</option></select></label><p class="muted">Tự lưu trên thiết bị này.</p><p id="theme-status" role="status" aria-live="polite"></p></dialog>');
+setupDialog($('#settings-dialog'));
+$('#theme-mode').onchange=event=>{window.jinhuntTheme?.set(event.target.value);$('#theme-status').textContent='Đã đổi giao diện.';};
+window.addEventListener('jinhunt-theme-change',()=>{$('#theme-mode').value=window.jinhuntTheme?.get()||'system';});
+window.addProfileShortcuts=addProfileShortcuts;
+if(page==='profile')addProfileShortcuts();

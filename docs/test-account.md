@@ -19,9 +19,12 @@ sudo docker compose exec api python -m app.test_account set-level --username jht
 sudo docker compose exec api python -m app.test_account set-level --username jhtest_demo --level 20
 sudo docker compose exec api python -m app.test_account set-level --username jhtest_demo --level 30
 sudo docker compose exec api python -m app.test_account set-level --username jhtest_demo --level 50
+sudo docker compose exec api python -m app.test_account set-level --username jhtest_demo --level 75
+sudo docker compose exec api python -m app.test_account set-level --username jhtest_demo --level 100
+sudo docker compose exec api python -m app.test_account set-level --username jhtest_demo --level 150
 ```
 
-Cấp 5 Đồng, 10 Bạc, 20 Vàng, 30 Bạch kim, 50 Kim cương. Cấp 1–4 không có khung. Tải lại trang để nhận dữ liệu mới. Muốn xem thông báo tăng cấp, mở tài khoản khi đang cấp thấp trước, sau đó gán cấp cao và tải lại. Lần đăng nhập đầu tiên chỉ ghi nhận cấp hiện tại, không hiện chúc mừng giả.
+Cấp 5 Đồng, 10 Bạc, 20 Vàng, 30 Bạch kim, 50 Kim cương, 75 Hồng ngọc, 100 Hoàng gia, 150 Huyền thoại. Lệnh test hỗ trợ cấp 1–200. Cấp 1–4 không có khung. Tải lại trang để nhận dữ liệu mới. Muốn xem thông báo tăng cấp, mở tài khoản khi đang cấp thấp trước, sau đó gán cấp cao và tải lại. Lần đăng nhập đầu tiên chỉ ghi nhận cấp hiện tại, không hiện chúc mừng giả.
 
 Để thử lên cấp bằng chơi thật thay vì gán thẳng, thêm --before-level vào set-level rồi kiếm thêm điểm. Công cụ không xóa lịch sử nhận thưởng; điểm danh vẫn một lần/ngày, thưởng tương tác vẫn một lần/bài.
 

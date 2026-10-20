@@ -646,7 +646,7 @@ def test_progression_boundaries_and_frames():
     assert progression(430)['xp_for_next_level']==265
     assert progression(695)['xp_for_next_level']==305
     assert progression(1000)['xp_for_next_level']==351
-    for level,tier in [(1,'none'),(4,'none'),(5,'bronze'),(9,'bronze'),(10,'silver'),(19,'silver'),(20,'gold'),(30,'platinum'),(50,'diamond'),(1000,'diamond')]:
+    for level,tier in [(1,'none'),(4,'none'),(5,'bronze'),(9,'bronze'),(10,'silver'),(19,'silver'),(20,'gold'),(30,'platinum'),(50,'diamond'),(74,'diamond'),(75,'ruby'),(99,'ruby'),(100,'royal'),(149,'royal'),(150,'legend'),(200,'legend'),(1000,'legend')]:
         threshold,needed=0,200
         for _ in range(level-1):
             threshold+=needed
@@ -718,13 +718,19 @@ def test_server_test_accounts_can_set_level_without_affecting_real_users(client)
         result=change_test_account(db,'set-level','jhtest_demo',50)
         assert result['level']==50 and result['avatar_frame']=='diamond'
         assert person.password_hash==old_password
+        for level in (75,100,150,200):
+            result=change_test_account(db,'set-level','jhtest_demo',level)
+            assert result['level']==level
+            assert result['xp']<2**53
+        assert result['xp']>2**31
+        assert result['avatar_frame']=='legend'
         with pytest.raises(ValueError):change_test_account(db,'set-level','realplayer',50)
         with pytest.raises(ValueError):change_test_account(db,'create','jhtest_bad',1,True,'test-password-123')
-        with pytest.raises(ValueError):change_test_account(db,'create','jhtest_bad',51,password='test-password-123')
+        with pytest.raises(ValueError):change_test_account(db,'create','jhtest_bad',201,password='test-password-123')
     login=client.post('/api/auth/login',json={'username':'jhtest_demo','password':'test-password-123'})
     assert login.status_code==200
     assert login.json()['user']['needs_legal_consent'] is True
-    assert login.json()['user']['level']==50
+    assert login.json()['user']['level']==200
     leaderboard=client.get('/api/leaderboard').json()
     assert 'jhtest_demo' not in [u['username'] for u in leaderboard]
     assert 'realplayer' in [u['username'] for u in leaderboard]

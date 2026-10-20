@@ -84,15 +84,20 @@ async function shareCase(button){
 }
 function bindShares(root){root.querySelectorAll('[data-share-case]').forEach(button=>button.onclick=()=>shareCase(button));}
 function avatarContent(name, url) { const initial = esc(Array.from(name || 'J')[0].toUpperCase()); return /^\/uploads\/[a-zA-Z0-9-]+\.jpg$/.test(url || '') ? `<img src="${esc(url)}" alt="" loading="lazy" data-fallback="${initial}">` : initial; }
-function avatarTier(level=1){return level>=50?'diamond':level>=30?'platinum':level>=20?'gold':level>=10?'silver':level>=5?'bronze':'none';}
+function avatarTier(level=1){return level>=150?'legend':level>=100?'royal':level>=75?'ruby':level>=50?'diamond':level>=30?'platinum':level>=20?'gold':level>=10?'silver':level>=5?'bronze':'none';}
 const rankGlyphs={
   bronze:'M5 5h14v7l-7 9-7-9Z M9 8l3 4 3-4',
   silver:'M4 5l8 5 8-5-3 12-5 4-5-4Z M8 12l4 3 4-3',
   gold:'M3 7l5 4 4-7 4 7 5-4-3 12H6Z M8 16h8',
   platinum:'M3 9l5 3 4-8 4 8 5-3-3 10H6Z M12 11v6 M9 14h6',
-  diamond:'M3 8l4-5h10l4 5-9 13Z M3 8h18 M7 3l5 18 5-18 M7 3l5 5 5-5'
+  diamond:'M3 8l4-5h10l4 5-9 13Z M3 8h18 M7 3l5 18 5-18 M7 3l5 5 5-5',
+  ruby:'M4 7l5-4h6l5 4-2 10-6 5-6-5Z M4 7h16 M9 3 7 12l5 10 5-10-2-9 M7 12h10',
+  royal:'M2 8l5 4 5-8 5 8 5-4-3 12H5Z M7 17h10 M10 13l2-2 2 2-2 2Z',
+  legend:'M12 21v-8M12 16C6 18 2 12 2 5l7 7-2-8 5 6 5-6-2 8 7-7c0 7-4 13-10 11ZM10 6l2-4 2 4 M8 20l4-3 4 3'
+
 };
-const rankLabels={none:'Khởi hành',bronze:'Đồng',silver:'Bạc',gold:'Vàng',platinum:'Bạch kim',diamond:'Kim cương'};
+function formatXP(value){return new Intl.NumberFormat('vi-VN',Number(value)>=1000000?{notation:'compact',maximumFractionDigits:1}:{}).format(Number(value)||0);}
+const rankLabels={none:'Khởi hành',bronze:'Đồng',silver:'Bạc',gold:'Vàng',platinum:'Bạch kim',diamond:'Kim cương',ruby:'Hồng ngọc',royal:'Hoàng gia',legend:'Huyền thoại'};
 function rankBadge(level){const tier=avatarTier(level);return tier==='none'?'':`<span class="rank-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${rankGlyphs[tier]}"/></svg></span>`;}
 function framedContent(name,url,level){return `<span class="avatar-face">${avatarContent(name,url)}</span>${rankBadge(level)}`;}
 function rankName(name,level,id){return `<span class="rank-name" data-rank="${avatarTier(level)}" ${id?`data-user="${Number(id)}" role="button" tabindex="0"`:""}>${esc(name)}</span>`;}
@@ -214,7 +219,7 @@ function renderUser() {
   $('#account-label').textContent = user ? 'Hồ sơ của tôi' : 'Đăng nhập';
   $('#journey-name').textContent = name;$('#journey-name').classList.add('rank-name');$('#journey-name').dataset.rank=avatarTier(user?.level);
   $('#journey-handle').textContent = user ? `@${user.username}` : 'Một góc nhìn mới đang chờ bạn';
-  $('#profile').textContent = user ? `Level ${user.level} · ${user.xp} XP · ${user.rank_name} · Còn ${user.xp_to_next_level} XP lên cấp` : 'Đăng nhập để bắt đầu tích lũy XP';
+  $('#profile').textContent = user ? `Level ${user.level} · ${formatXP(user.xp)} XP · ${user.rank_name} · Còn ${formatXP(user.xp_to_next_level)} XP lên cấp` : 'Đăng nhập để bắt đầu tích lũy XP';
   $('#xp-fill').style.width = `${user ? 100*user.xp_in_level/user.xp_for_next_level : 0}%`;
   $('.xp-track').setAttribute('aria-valuenow',user?user.xp_in_level:0);
   $('.xp-track').setAttribute('aria-valuemax',user?user.xp_for_next_level:200);
@@ -352,16 +357,17 @@ async function loadFeed(append = false) {
   $('.composer').hidden = page !== 'explore';
   if (!append) $('#feed').innerHTML = '<div class="empty">Đang tải hành trình…</div>';
   try {
-    if (page === 'ranking') { const rows = await api('/leaderboard');if(!current())return; $('#feed').innerHTML = rows.length ? rows.map((u,i) => `<div class="leader"><span>${String(i+1).padStart(2,'0')}</span>${avatar(u.display_name || u.username,u.avatar_url,u.level,u.id)}<strong>${rankName(u.display_name || u.username,u.level,u.id)}</strong><span class="score">Level ${u.level} · ${u.xp} XP</span></div>`).join('') : '<div class="empty">Bảng xếp hạng đang chờ nhà khám phá đầu tiên.</div>'; return; }
+    if (page === 'ranking') { const rows = await api('/leaderboard');if(!current())return; $('#feed').innerHTML = rows.length ? rows.map((u,i) => `<div class="leader"><span>${String(i+1).padStart(2,'0')}</span>${avatar(u.display_name || u.username,u.avatar_url,u.level,u.id)}<strong>${rankName(u.display_name || u.username,u.level,u.id)}</strong><span class="score">Level ${u.level} · ${formatXP(u.xp)} XP</span></div>`).join('') : '<div class="empty">Bảng xếp hạng đang chờ nhà khám phá đầu tiên.</div>'; return; }
     const own = page === 'profile',visiting=page==='person';
     if(visiting){await window.renderPersonProfile();if(!current())return;}
     if(own){
       $('#section-title').textContent='Trang cá nhân';$('#feed-label').textContent='Dòng thời gian · Bài viết của tôi';
       let header=$('#timeline-profile');
       if(!header){header=document.createElement('section');header.id='timeline-profile';$('.feed-toolbar').before(header);}
-      header.innerHTML=`${avatar(user.display_name||user.username,user.avatar_url,user.level)}<div><h2>${rankName(user.display_name||user.username,user.level)}</h2><p>@${esc(user.username)} · Level ${user.level} · ${user.xp} XP</p><p class="timeline-bio">${esc(user.bio||'Mỗi bức ảnh, một dấu chân khám phá.')}</p></div><section class="timeline-actions" aria-label="Thao tác tài khoản"><button type="button" class="outline" id="edit-my-profile">Chỉnh sửa hồ sơ</button><button type="button" class="outline" id="timeline-logout">Đăng xuất</button></section>`;
+      header.innerHTML=`${avatar(user.display_name||user.username,user.avatar_url,user.level)}<div><h2>${rankName(user.display_name||user.username,user.level)}</h2><p>@${esc(user.username)} · Level ${user.level} · ${formatXP(user.xp)} XP</p><p class="timeline-bio">${esc(user.bio||'Mỗi bức ảnh, một dấu chân khám phá.')}</p></div><section class="timeline-actions" aria-label="Thao tác tài khoản"><button type="button" class="outline" id="edit-my-profile">Chỉnh sửa hồ sơ</button><button type="button" class="outline" id="timeline-logout">Đăng xuất</button></section>`;
       let daily=$('#profile-daily');if(!daily){daily=document.createElement('div');daily.id='profile-daily';header.after(daily);}
       daily.innerHTML=dailyMarkup();loadDailyProgress();window.renderOwnSocial?.();
+      window.addProfileShortcuts?.();
       $('#edit-my-profile').onclick=openProfileEditor;
       $('#timeline-logout').onclick=async event=>{const button=event.currentTarget;button.disabled=true;try{await $('#logout').onclick();}finally{button.disabled=false;}};
     }
@@ -381,7 +387,7 @@ async function loadFeed(append = false) {
     if ($('#empty-create')) $('#empty-create').onclick = () => $('#create').click();
   } catch (error) {if(!current())return; if (!append) { $('#feed').innerHTML = '<div class="empty">Không tải được dữ liệu. <button id="retry">Thử lại</button></div>'; $('#retry').onclick = () => loadFeed(); } else $('#load-more').hidden = false; toast(error.message,'error'); }
 }
-async function loadHunters() { try { const rows = (await api('/leaderboard')).slice(0, 4); $('#top-hunters').innerHTML = rows.length ? rows.map((u,i) => `<div class="hunter"><span class="hunter-rank">${i+1}</span>${avatar(u.display_name || u.username,u.avatar_url,u.level,u.id)}<div><strong>${rankName(u.display_name || u.username,u.level,u.id)}</strong><span>Level ${u.level} · ${u.xp} XP</span></div></div>`).join('') : '<p class="muted">Cộng đồng đang chờ nhà khám phá đầu tiên. Có thể là bạn!</p>'; } catch { $('#top-hunters').innerHTML = '<p class="muted">Chưa tải được bảng xếp hạng.</p>'; } }
+async function loadHunters() { try { const rows = (await api('/leaderboard')).slice(0, 4); $('#top-hunters').innerHTML = rows.length ? rows.map((u,i) => `<div class="hunter"><span class="hunter-rank">${i+1}</span>${avatar(u.display_name || u.username,u.avatar_url,u.level,u.id)}<div><strong>${rankName(u.display_name || u.username,u.level,u.id)}</strong><span>Level ${u.level} · ${formatXP(u.xp)} XP</span></div></div>`).join('') : '<p class="muted">Cộng đồng đang chờ nhà khám phá đầu tiên. Có thể là bạn!</p>'; } catch { $('#top-hunters').innerHTML = '<p class="muted">Chưa tải được bảng xếp hạng.</p>'; } }
 async function loadComments(id) { const rows = await api(`/cases/${id}/comments`); $('#comments').innerHTML = rows.length ? rows.map(c => `<div class="comment ${c.is_hidden ? 'hidden-comment' : ''}">${avatar(c.display_name || c.username,c.avatar_url,c.level,c.user_id)}<div class="comment-body"><strong>${rankName(c.display_name || c.username,c.level,c.user_id)}</strong><p>${esc(c.content)}</p>${c.is_hidden ? '<span class="comment-hidden-label">Nội dung được giữ riêng tư</span>' : ''}${c.user_id&&c.user_id!==user?.id?`<button type="button" class="comment-report" data-report-comment="${c.id}" aria-label="Báo cáo bình luận">Báo cáo</button>`:''}</div></div>`).join('') : '<p class="muted">Chưa có trao đổi. Hãy bắt đầu với một gợi ý!</p>'; }
 async function openCase(id, discussion = false) {
   try {

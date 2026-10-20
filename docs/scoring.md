@@ -13,9 +13,13 @@
 ## Cấp và hoạt động hằng ngày
 
 - Cấp 1 lên 2 cần 200 XP. Mỗi cấp tiếp theo cần thêm 15% so với cấp trước, làm tròn lên đến XP nguyên: 200 → 230 → 265 → 305 → 351… Tổng XP đạt cấp là tổng chi phí các cấp trước, không nhân trực tiếp tổng XP với 15%.
-- Viền avatar: cấp 1–4 không viền, 5–9 Đồng, 10–19 Bạc, 20–29 Vàng, 30–49 Bạch kim, từ 50 Kim cương.
+- Viền avatar: cấp 1–4 không viền, 5–9 Đồng, 10–19 Bạc, 20–29 Vàng, 30–49 Bạch kim, 50–74 Kim cương, 75–99 Hồng ngọc, 100–149 Hoàng gia, từ 150 Huyền thoại.
 - Tổng XP cũ giữ nguyên; cấp được tính lại theo công thức mới, vì vậy tài khoản cũ có thể hiển thị cấp thấp hơn trước. Bảng xếp hạng vẫn sắp theo tổng XP.
 - Điểm danh: bấm nhận 5 XP một lần/ngày. Không tự nhận khi chỉ mở trang.
 - Nhiệm vụ: giải đúng một bài chưa giải để tự nhận thêm 10 XP một lần/ngày. Không nhận lại bằng cách trả lời bài đã giải từ ngày trước. Cộng cùng với điểm thứ hạng và điểm bình luận nếu có.
 - Ngày tính theo UTC+7 (giờ Việt Nam), máy chủ quyết định; không phụ thuộc đồng hồ điện thoại. Mốc ngày mới 00:00. Không có thưởng chuỗi ngày và không trừ điểm nếu bỏ lỡ.
 - daily_rewards có ràng buộc duy nhất người/ngày/loại để tránh nhận nhiều lần hoặc qua nhiều thiết bị. Bảng được tạo tự động khi khởi động.
+
+- Hạng cao: Hồng ngọc có đá ruby đỏ; Hoàng gia tím vàng và vương miện; Huyền thoại vàng trắng với biểu tượng phượng hoàng. Tên và khung avatar theo màu hạng trên toàn bộ giao diện.
+- Giữ đường XP tăng 15% mỗi cấp; không tự nâng cấp tài khoản cũ. users.total_xp dùng BIGINT trên PostgreSQL để lưu các mốc cao mà không tràn số nguyên 32-bit. Migration tự nâng kiểu, không thay đổi số điểm.
+- Lệnh test cho phép cấp 1–200; tổng XP của mốc 200 vẫn trong giới hạn số nguyên chính xác của JavaScript. Hiển thị XP lớn được rút gọn theo định dạng tiếng Việt; API vẫn trả tổng số nguyên đầy đủ.

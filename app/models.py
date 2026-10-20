@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Text, ForeignKey, DateTime, UniqueConstraint, Date
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, ForeignKey, DateTime, UniqueConstraint, Date
 from sqlalchemy.sql import func
 from .database import Base
 
@@ -7,7 +7,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     username = Column(String(50), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
-    total_xp = Column(Integer, default=0, nullable=False)
+    total_xp = Column(BigInteger, default=0, nullable=False)
     is_test = Column(Integer, default=0, nullable=False)
     display_name = Column(String(80), nullable=True)
     bio = Column(String(500), nullable=True)

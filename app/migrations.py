@@ -1,5 +1,5 @@
 """Additive upgrade from the initial MVP. Existing accounts keep their data."""
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, text, BigInteger
 from .database import Base
 
 def upgrade(engine):
@@ -7,6 +7,10 @@ def upgrade(engine):
         if engine.dialect.name == "postgresql":
             connection.execute(text("SELECT pg_advisory_xact_lock(72194318)"))
         Base.metadata.create_all(connection)
+        if engine.dialect.name=="postgresql":
+            xp_type=next(c["type"] for c in inspect(connection).get_columns("users") if c["name"]=="total_xp")
+            if not isinstance(xp_type,BigInteger):
+                connection.execute(text("ALTER TABLE users ALTER COLUMN total_xp TYPE BIGINT"))
         columns = {column["name"] for column in inspect(connection).get_columns("users")}
         for name, size in {"display_name": 80, "bio": 500, "email": 254, "phone": 20, "avatar_url": 255}.items():
             if name not in columns:

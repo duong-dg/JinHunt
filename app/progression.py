@@ -1,11 +1,12 @@
 """Progression thresholds and avatar tiers, derived from total XP."""
 from datetime import datetime, timezone, timedelta
 
-TIERS=((50,"diamond","Kim cương"),(30,"platinum","Bạch kim"),(20,"gold","Vàng"),(10,"silver","Bạc"),(5,"bronze","Đồng"),(1,"none","Khởi hành"))
+MAX_TEST_LEVEL=200
+TIERS=((150,"legend","Huyền thoại"),(100,"royal","Hoàng gia"),(75,"ruby","Hồng ngọc"),(50,"diamond","Kim cương"),(30,"platinum","Bạch kim"),(20,"gold","Vàng"),(10,"silver","Bạc"),(5,"bronze","Đồng"),(1,"none","Khởi hành"))
 
 def xp_for_level(level):
-    if not isinstance(level,int) or isinstance(level,bool) or not 1<=level<=50:
-        raise ValueError("Cấp test phải từ 1 đến 50.")
+    if not isinstance(level,int) or isinstance(level,bool) or not 1<=level<=MAX_TEST_LEVEL:
+        raise ValueError(f"Cấp test phải từ 1 đến {MAX_TEST_LEVEL}.")
     total,needed=0,200
     for _ in range(level-1):
         total+=needed

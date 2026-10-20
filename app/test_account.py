@@ -7,7 +7,7 @@ from .database import SessionLocal, engine
 from .migrations import upgrade
 from .models import User
 from .main import password_hash
-from .progression import progression, xp_for_level
+from .progression import progression, xp_for_level, MAX_TEST_LEVEL
 
 
 def change_test_account(db, action, username, level, before_level=False, password=None):
@@ -41,7 +41,7 @@ def main():
     parser=argparse.ArgumentParser(description="Tạo tài khoản test hoặc gán cấp, chỉ chạy trên server.")
     parser.add_argument("action",choices=("create","set-level"))
     parser.add_argument("--username",required=True)
-    parser.add_argument("--level",required=True,type=int,choices=range(1,51),metavar="1..50")
+    parser.add_argument("--level",required=True,type=int,choices=range(1,MAX_TEST_LEVEL+1),metavar=f"1..{MAX_TEST_LEVEL}")
     parser.add_argument("--before-level",action="store_true",help="Đặt XP ngay trước mốc lên cấp để thử thông báo.")
     args=parser.parse_args()
     try:
