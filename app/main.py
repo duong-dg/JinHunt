@@ -25,6 +25,7 @@ from .database import Base, engine, get_db
 from .models import ModerationAudit, User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation, ImageReview
 from .migrations import upgrade
 from .image_safety import scan_image
+from .email_verification import consume_registration_proof, build_router as email_router
 from .auth_security import COOKIE_NAME, login_limits, throttle, check_password, consume_totp
 from .moderation import build_router as moderation_router
 from .legal import ConsentInput, VERSION as LEGAL_VERSION, age, latest_consent, record_consent, start_guardian, build_router
@@ -49,6 +50,8 @@ async def staff_response_headers(request:Request,call_next):
         response.headers['Referrer-Policy']='no-referrer'
         response.headers['X-Frame-Options']='DENY'
         response.headers['X-Content-Type-Options']='nosniff'
+    if request.url.path.startswith(('/api/email-verification/','/api/me/email-verification/')):
+        response.headers['Cache-Control']='no-store'
     return response
 
 def normalize(value):
@@ -63,7 +66,7 @@ def public_user(user):
 
 def private_user(user, db=None):
     return {**public_user(user), "email": user.email, "phone": user.phone,
-            "contact_verified": False, "guardian_managed":bool(user.guardian_managed),
+            "contact_verified":bool(user.email and user.email_verified), "email_verified":bool(user.email and user.email_verified), "phone_verified":False, "guardian_managed":bool(user.guardian_managed),
             "needs_legal_consent":bool(db is not None and (not user.player_birth_date or not latest_consent(db,user))),
             "role":user.role, "player_birth_date":user.player_birth_date.isoformat() if user.player_birth_date else None, "legal_version":LEGAL_VERSION}
 
@@ -207,6 +210,7 @@ class ProfileUpdate(BaseModel):
         return value.strip() if value else None
 
 class Registration(ProfileUpdate, ConsentInput):
+    email_verification_token: str | None = Field(default=None,max_length=128)
     username: str = Field(pattern=r"^[a-zA-Z0-9_]{3,30}$")
     password: str | None = Field(default=None,min_length=8, max_length=128)
 
@@ -233,6 +237,10 @@ def session_response(user, db):
 def home():
     return FileResponse(STATIC_DIR / "index.html")
 
+@app.get('/verify-email',include_in_schema=False)
+def email_link_page():
+    return FileResponse(STATIC_DIR/'verify-email.html',headers=staff_page_headers())
+
 @app.get("/api/health")
 def health(db: Session = Depends(get_db)):
     db.execute(select(1))
@@ -241,8 +249,12 @@ def health(db: Session = Depends(get_db)):
 @app.post("/api/auth/register", status_code=201)
 def register(data: Registration, db: Session = Depends(get_db)):
     minor = age(data.player_birth_date)<18
+    if not minor and data.email:
+        if db.scalar(select(User.id).where((User.email==data.email)|(User.username==data.username.lower()))):
+            raise HTTPException(409,"Tên người dùng hoặc email đã được sử dụng.")
+        consume_registration_proof(db,data.email,data.email_verification_token)
     user = User(username=data.username.lower(), password_hash=password_hash(data.password or secrets.token_urlsafe(32)),
-                email=None if minor else data.email, phone=None if minor else data.phone,
+                email=None if minor else data.email, email_verified=int(not minor and bool(data.email)), phone=None if minor else data.phone,
                 display_name=data.display_name, bio="" if minor else data.bio,player_birth_date=data.player_birth_date,
                 account_status="pending_guardian" if minor else "active",guardian_managed=int(minor))
     db.add(user)
@@ -299,6 +311,13 @@ def edit_profile(data: ProfileUpdate, user: User = Depends(current_user), db: Se
     email, phone = changes.get("email", user.email), changes.get("phone", user.phone)
     if not email and not phone:
         raise HTTPException(400, "Hãy giữ ít nhất một email hoặc số điện thoại.")
+    if email!=user.email:
+        if user.guardian_managed: raise HTTPException(403,"Liên hệ hỗ trợ để đổi email người đại diện.")
+        if email:
+            if db.scalar(select(User.id).where(User.email==email,User.id!=user.id)):
+                raise HTTPException(409,"Thông tin liên hệ đã được sử dụng.")
+            raise HTTPException(400,"Hãy gửi mã và xác minh email mới trước khi lưu hồ sơ.")
+        user.email_verified=0
     for key, value in changes.items():
         setattr(user, key, value)
     try:
@@ -627,3 +646,5 @@ def staff_logout(user:User=Depends(current_user),staff_cookie:str|None=Cookie(de
     response=JSONResponse({'status':'ok'},headers={'Cache-Control':'no-store'})
     response.delete_cookie(COOKIE_NAME,path='/',secure=os.getenv('STAFF_COOKIE_SECURE','1')!='0',httponly=True,samesite='strict')
     return response
+
+app.include_router(email_router(current_user,clean_email,private_user))

@@ -12,6 +12,7 @@ class User(Base):
     bio = Column(String(500), nullable=True)
     avatar_url = Column(String(255), nullable=True)
     email = Column(String(254), unique=True, nullable=True)
+    email_verified = Column(Integer, default=0, nullable=False)
     phone = Column(String(20), unique=True, nullable=True)
     player_birth_date = Column(Date, nullable=True)
     account_status = Column(String(30), default="active", nullable=False)
@@ -85,6 +86,21 @@ class LoginBucket(Base):
     key = Column(String(64), primary_key=True)
     attempts = Column(Integer, nullable=False)
     expires_at = Column(Float, nullable=False, index=True)
+
+class EmailVerification(Base):
+    __tablename__ = "email_verifications"
+    id = Column(String(64), primary_key=True)
+    email = Column(String(254), nullable=False,index=True)
+    purpose = Column(String(20), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    code_hash = Column(String(64), nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    created_at = Column(Float, nullable=False)
+    expires_at = Column(Float, nullable=False)
+    verified_at = Column(Float, nullable=True)
+    proof_hash = Column(String(64), nullable=True,unique=True)
+    link_hash = Column(String(64), nullable=True,unique=True)
+    consumed_at = Column(Float, nullable=True)
 
 class ImageReview(Base):
     __tablename__ = "image_reviews"

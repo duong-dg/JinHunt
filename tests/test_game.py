@@ -137,6 +137,11 @@ LEGAL_FIELDS = {'player_birth_date':'2000-01-01','terms_accepted':True,'privacy_
 
 @pytest.fixture
 def client(monkeypatch):
+    from app import email_verification
+    monkeypatch.setenv('EMAIL_CODE_KEY','test-only-email-code-key-not-for-production')
+    messages=[]
+    links=[]
+    monkeypatch.setattr(email_verification,'send_code',lambda email,code,link=None:(messages.append((email,code)),links.append(link)))
     monkeypatch.setenv("MODERATION_REQUIRE_REVIEW","0")
     monkeypatch.setenv("IMAGE_SCANNER","off")
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -147,12 +152,23 @@ def client(monkeypatch):
             yield session
     app.dependency_overrides[get_db] = database
     with TestClient(app) as client:
+        client.email_codes=messages
+        client.email_links=links
         yield client
     app.dependency_overrides.clear()
     engine.dispose()
 
+def email_proof(client,email):
+    result=client.post('/api/email-verification/request',json={'email':email})
+    assert result.status_code==200,result.text
+    code=next(code for target,code in reversed(client.email_codes) if target==email.lower().strip())
+    confirmed=client.post('/api/email-verification/confirm',json={'challenge_id':result.json()['challenge_id'],'code':code})
+    assert confirmed.status_code==200,confirmed.text
+    return confirmed.json()['verification_token']
+
 def account(client, username):
-    r = client.post('/api/auth/register', json={'username': username, 'password': 'test-password-123', 'email': f'{username}@example.com',**LEGAL_FIELDS})
+    proof=email_proof(client,f'{username}@example.com')
+    r = client.post('/api/auth/register', json={'username': username, 'password': 'test-password-123', 'email': f'{username}@example.com','email_verification_token':proof,**LEGAL_FIELDS})
     assert r.status_code == 201, r.text
     return {'Authorization': 'Bearer ' + r.json()['token']}
 
@@ -236,12 +252,17 @@ def test_contact_registration_profile_and_privacy(client):
     assert client.patch('/api/me', json={'bio': 'hi'}).status_code == 401
     assert client.patch('/api/me', headers=headers, json={'phone': ''}).status_code == 400
     assert client.patch('/api/me', headers=headers, json={'xp': 9000}).status_code == 422
+    assert client.patch('/api/me',headers=headers,json={'email':'tester@example.com'}).status_code==400
+    sent=client.post('/api/me/email-verification/request',headers=headers,json={'email':' TESTER@EXAMPLE.COM '}).json()
+    code=client.email_codes[-1][1]
+    confirmed=client.post('/api/me/email-verification/confirm',headers=headers,json={'challenge_id':sent['challenge_id'],'code':code})
+    assert confirmed.status_code==200,confirmed.text
     result = client.patch('/api/me', headers=headers, json={'email': ' TESTER@EXAMPLE.COM ', 'bio': ' Thích khám phá ', 'phone': None})
     assert result.status_code == 200
     assert result.json()['email'] == 'tester@example.com'
     assert result.json()['bio'] == 'Thích khám phá'
     assert result.json()['phone'] is None
-    assert result.json()['contact_verified'] is False
+    assert result.json()['contact_verified'] is True
     assert client.post('/api/auth/login', json={'username': 'TESTER@example.com', 'password': base['password']}).status_code == 200
     other = account(client, 'other')
     assert client.patch('/api/me', headers=other, json={'email': 'tester@example.com'}).status_code == 409
@@ -402,7 +423,8 @@ def test_explicit_legal_consent_and_rights(client):
         assert client.post('/api/auth/register',json={**base,**change}).status_code==422
     missing=base.copy();missing.pop('terms_accepted')
     assert client.post('/api/auth/register',json=missing).status_code==422
-    response=client.post('/api/auth/register',json=base)
+    proof=email_proof(client,base['email'])
+    response=client.post('/api/auth/register',json={**base,'email_verification_token':proof})
     assert response.status_code==201
     headers={'Authorization':'Bearer '+response.json()['token']}
     assert client.get('/api/me',headers=headers).json()['needs_legal_consent'] is False

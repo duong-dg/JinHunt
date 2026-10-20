@@ -17,20 +17,20 @@ def secret_cipher():
     except (KeyError,ValueError):
         raise HTTPException(503,'Chưa cấu hình khóa bảo vệ xác thực quản trị trên server.')
 
-def throttle(db,scope,identity,limit):
-    now=time.time();period=int(now//900)
+def throttle(db,scope,identity,limit,window=900):
+    now=time.time();period=int(now//window)
     key=hashlib.sha256(f'{scope}:{identity}:{period}'.encode()).hexdigest()
     if db.get_bind().dialect.name=='postgresql':
         from sqlalchemy.dialects.postgresql import insert
     else:
         from sqlalchemy.dialects.sqlite import insert
-    stmt=insert(LoginBucket).values(key=key,attempts=1,expires_at=(period+1)*900)
+    stmt=insert(LoginBucket).values(key=key,attempts=1,expires_at=(period+1)*window)
     stmt=stmt.on_conflict_do_update(index_elements=['key'],set_={'attempts':LoginBucket.attempts+1}).returning(LoginBucket.attempts)
     count=db.scalar(stmt)
     db.execute(delete(LoginBucket).where(LoginBucket.expires_at<now-900))
     db.commit()
     if count>limit:
-        raise HTTPException(429,'Bạn đã thử đăng nhập quá nhiều lần. Vui lòng chờ rồi thử lại.',headers={'Retry-After':str(max(1,int((period+1)*900-now)))})
+        raise HTTPException(429,'Bạn đã thử quá nhiều lần. Vui lòng chờ rồi thử lại.',headers={'Retry-After':str(max(1,int((period+1)*window-now)))})
 
 def login_limits(db,request,identifier):
     # Trust the ASGI client address, never arbitrary X-Forwarded-For headers here.

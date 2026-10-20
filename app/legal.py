@@ -220,6 +220,7 @@ def build_router(current_user, password_hash):
         claimed = db.execute(update(GuardianInvite).where(GuardianInvite.token_hash==invite.token_hash,GuardianInvite.used_at.is_(None)).values(used_at=time.time()))
         if claimed.rowcount != 1: raise HTTPException(400,"Liên kết đã được sử dụng.")
         user.email, user.phone = invite.guardian_email, None
+        user.email_verified=1
         user.display_name, user.bio = data.display_name.strip(), ""
         user.password_hash = password_hash(data.new_password)
         user.account_status, user.guardian_managed = "active",1

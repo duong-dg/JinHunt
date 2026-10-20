@@ -16,6 +16,7 @@ def upgrade(engine):
         additions = {"player_birth_date": "DATE", "account_status": "VARCHAR(30) NOT NULL DEFAULT 'active'", "guardian_managed": "INTEGER NOT NULL DEFAULT 0"}
         additions.update(role="VARCHAR(20) NOT NULL DEFAULT 'user'", suspended="INTEGER NOT NULL DEFAULT 0")
         additions.update(staff_totp_secret="TEXT",staff_totp_counter="INTEGER NOT NULL DEFAULT -1")
+        additions.update(email_verified="INTEGER NOT NULL DEFAULT 0")
         for name, definition in additions.items():
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
@@ -28,3 +29,7 @@ def upgrade(engine):
         token_columns={column["name"] for column in inspect(connection).get_columns("tokens")}
         if "staff_verified" not in token_columns:
             connection.execute(text("ALTER TABLE tokens ADD COLUMN staff_verified INTEGER NOT NULL DEFAULT 0"))
+        email_columns={column["name"] for column in inspect(connection).get_columns("email_verifications")}
+        if "link_hash" not in email_columns:
+            connection.execute(text("ALTER TABLE email_verifications ADD COLUMN link_hash VARCHAR(64)"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_email_link_hash ON email_verifications (link_hash)"))

@@ -56,18 +56,18 @@ document.addEventListener('error', event => { if (event.target.matches?.('.avata
 document.querySelectorAll('[data-icon]').forEach(element => element.innerHTML = icon(element.dataset.icon));
 const contacts = document.createElement('div');
 contacts.id = 'register-contacts'; contacts.hidden = true;
-contacts.innerHTML = '<label>Tên hiển thị<input name="display_name" maxlength="80" autocomplete="nickname"></label><label>Email<input name="email" type="email" maxlength="254" autocomplete="email"></label><label>Số điện thoại<input name="phone" type="tel" maxlength="40" autocomplete="tel" placeholder="0901234567 hoặc +84901234567"></label><p class="muted">Cần email hoặc số điện thoại. Hiện chưa xác minh bằng email/OTP.</p>';
+contacts.innerHTML = '<label>Tên hiển thị<input name="display_name" maxlength="80" autocomplete="nickname"></label><label>Email<input name="email" type="email" maxlength="254" autocomplete="email"></label><label>Số điện thoại<input name="phone" type="tel" maxlength="40" autocomplete="tel" placeholder="0901234567 hoặc +84901234567"></label><p class="muted">Cần email hoặc số điện thoại. Nếu dùng email, cần mã xác minh gửi đến hộp thư. Số điện thoại chưa xác minh OTP.</p>';
 $('#auth-submit').before(contacts);
 const loginInput = $('#auth-form [name=username]');
 loginInput.removeAttribute('pattern'); loginInput.maxLength = 254;
 loginInput.placeholder = 'Tên đăng nhập, email hoặc số điện thoại';
-document.body.insertAdjacentHTML('beforeend', '<dialog id="profile-dialog"><button class="close" aria-label="Đóng">×</button><p class="eyebrow">HỒ SƠ CỦA BẠN</p><h2>Thông tin cá nhân</h2><form id="profile-form"><label>Tên hiển thị<input name="display_name" maxlength="80" autocomplete="nickname"></label><label>Giới thiệu<textarea name="bio" maxlength="500"></textarea></label><label>Email<input name="email" type="email" maxlength="254" autocomplete="email"></label><label>Số điện thoại<input name="phone" type="tel" maxlength="40" autocomplete="tel"></label><p class="muted">Email và số điện thoại chỉ bạn thấy, chưa được xác minh. Giữ ít nhất một thông tin liên hệ.</p><button class="primary" type="submit">Lưu thông tin</button></form><button class="text-button" id="logout">Đăng xuất</button></dialog>');
+document.body.insertAdjacentHTML('beforeend', '<dialog id="profile-dialog"><button class="close" aria-label="Đóng">×</button><p class="eyebrow">HỒ SƠ CỦA BẠN</p><h2>Thông tin cá nhân</h2><form id="profile-form"><label>Tên hiển thị<input name="display_name" maxlength="80" autocomplete="nickname"></label><label>Giới thiệu<textarea name="bio" maxlength="500"></textarea></label><label>Email<input name="email" type="email" maxlength="254" autocomplete="email"></label><label>Số điện thoại<input name="phone" type="tel" maxlength="40" autocomplete="tel"></label><p class="muted">Email và số điện thoại chỉ bạn thấy. Email cần xác minh bằng mã; số điện thoại chưa xác minh OTP. Giữ ít nhất một thông tin liên hệ.</p><button class="primary" type="submit">Lưu thông tin</button></form><button class="text-button" id="logout">Đăng xuất</button></dialog>');
 $('#profile-form').insertAdjacentHTML('beforebegin', '<section class="avatar-editor" aria-label="Ảnh đại diện"><span class="avatar self-avatar profile-avatar">J</span><div><strong>Ảnh đại diện của bạn</strong><p>Ảnh được cắt vuông; chỉ công khai sau khi được duyệt.</p><div class="avatar-actions"><button type="button" id="avatar-choose">Chọn ảnh mới</button><button type="button" id="avatar-remove" hidden>Xóa ảnh</button></div><input type="file" id="avatar-file" accept="image/jpeg,image/png,image/webp" aria-label="Chọn ảnh đại diện" hidden><p id="avatar-status" role="status" aria-live="polite"></p></div></section>');
-$('#avatar-choose').onclick = () => { if (!$('#avatar-rights')?.checked) { toast('Hãy xác nhận quyền sử dụng ảnh đại diện trước.','error'); return; } $('#avatar-file').click(); };
+$('#avatar-choose').onclick = () => { if(requireLogin()) $('#avatar-file').click(); };
 async function updateAvatar(remove = false) {
   const input = $('#avatar-file'), file = input.files[0];
   if (!remove && !file) return;
-  if (!remove && !$('#avatar-rights')?.checked) { toast('Cần xác nhận quyền sử dụng ảnh đại diện.','error'); input.value=''; return; }
+  if (!remove && !requireLogin()) { input.value=''; return; }
   $('#avatar-choose').disabled = $('#avatar-remove').disabled = true;
   $('#avatar-status').textContent = remove ? 'Đang xóa ảnh…' : 'Đang tải ảnh đại diện…';
   try {
@@ -77,7 +77,6 @@ async function updateAvatar(remove = false) {
     renderUser(); loadHunters(); loadFeed();
     $('#avatar-status').textContent = remove ? 'Đã xóa ảnh đại diện.' : user.moderation_status==='pending' ? 'Ảnh đại diện đang chờ duyệt, chưa công khai.' : 'Đã lưu ảnh đại diện mới.';
     toast($('#avatar-status').textContent);
-    if ($('#avatar-rights')) $('#avatar-rights').checked=false;
   } catch (error) { $('#avatar-status').textContent = error.message; toast(error.message,'error'); }
   finally { input.value = ''; $('#avatar-choose').disabled = $('#avatar-remove').disabled = false; }
 }
@@ -121,6 +120,8 @@ async function api(path, options = {}) {
   return data;
 }
 function renderUser() {
+  if($('#review-consent')) $('#review-consent').textContent=user?.needs_legal_consent ? 'Xác nhận điều khoản tài khoản' : 'Điều khoản đã đồng ý ↗';
+  window.renderEmailVerification?.();
   window.renderStaffNav?.();
   const name = user ? user.display_name || user.username : 'Nhà khám phá mới';
   $('#account-label').textContent = user ? 'Hồ sơ của tôi' : 'Đăng nhập';
@@ -141,40 +142,64 @@ async function refreshUser() { if (token) { try { user = await api('/me'); } cat
 function requireLogin(consentRequired = true) { if (user) { if (consentRequired && user.needs_legal_consent) { if (typeof openConsentDialog==='function') openConsentDialog(); else toast('Cần xác nhận điều khoản và độ tuổi trong tài khoản.','error'); return false; } return true; } $('#auth-dialog').showModal(); return false; }
 async function busy(form, task) { if (form.dataset.locating === 'true') { formMessage(form,'Đang lấy vị trí, vui lòng chờ hoặc bấm Hủy.'); return; } const button = form.querySelector('[type="submit"]'); button.disabled = true; formMessage(form,''); try { await task(); } catch (error) { formMessage(form,error.message); toast(error.message,'error'); } finally { button.disabled = false; } }
 const locationRequests = new WeakMap();
+const locationStarters = new WeakMap();
 function locationMarkup(forGuess = false) {
   if (forGuess && user?.guardian_managed) return '<p class="muted">Tài khoản được người đại diện quản lý dự đoán bằng tên, chưa dùng GPS.</p>';
-  return `<section class="location-picker"><h3>${forGuess ? 'Hoặc xác nhận bằng vị trí của bạn' : 'Vị trí địa điểm trong ảnh (tùy chọn)'}</h3><p class="muted">${forGuess ? 'Nếu bạn đang ở nơi trong ảnh, dùng vị trí máy để gửi dự đoán.' : 'Chỉ lấy vị trí máy khi bạn đang ở đúng nơi chụp ảnh. Bạn vẫn đăng được bằng đáp án tên địa danh.'}</p><input type="hidden" name="latitude"><input type="hidden" name="longitude"><div class="location-actions"><button type="button" class="locate-button">${icon('pin')} Lấy vị trí hiện tại</button><button type="button" class="clear-location" hidden>Bỏ vị trí</button></div><p class="location-status" role="status" aria-live="polite">Chưa đính kèm vị trí.</p></section>`;
+  return `<section class="location-picker" data-location-mode="${forGuess?'guess':'create'}"><h3>${forGuess ? 'Xác nhận bằng vị trí của bạn' : 'Vị trí địa điểm trong ảnh (tùy chọn)'}</h3><p class="muted">${forGuess ? 'Mở mục này sẽ tự lấy vị trí máy để dự đoán. Đóng mục để chỉ gửi bình luận bằng chữ.' : 'Tự lấy vị trí khi mở tạo bài. Nếu ảnh chụp ở nơi khác, chọn Bỏ vị trí để tránh gắn sai địa điểm.'}</p><input type="hidden" name="latitude"><input type="hidden" name="longitude"><div class="location-actions"><button type="button" class="locate-button" hidden>${icon('pin')} Thử lại</button><button type="button" class="clear-location" hidden>Bỏ vị trí</button></div><p class="location-status" role="status" aria-live="polite">Vị trí sẽ được lấy tự động khi mở phần này.</p></section>`;
 }
 function bindLocation(form) {
   const picker = form.querySelector('.location-picker');
   if (!picker) return;
   const locate = picker.querySelector('.locate-button'), clear = picker.querySelector('.clear-location'), status = picker.querySelector('.location-status');
   const latitude = form.elements.latitude, longitude = form.elements.longitude;
-  const invalidate = () => { locationRequests.set(form, Symbol()); form.dataset.locating = 'false'; locate.disabled = false; locate.innerHTML = `${icon('pin')} Lấy vị trí hiện tại`; };
-  const reset = () => { invalidate(); latitude.value = ''; longitude.value = ''; clear.hidden = true; clear.textContent = 'Bỏ vị trí'; status.textContent = 'Chưa đính kèm vị trí.'; };
+  const details = picker.closest('.gps-details');
+  const invalidate = () => { locationRequests.set(form, Symbol()); form.dataset.locating = 'false'; locate.disabled = false; };
+  const reset = () => { invalidate(); latitude.value = ''; longitude.value = ''; clear.hidden = true; clear.textContent = 'Bỏ vị trí'; locate.hidden=true; status.textContent = 'Không đính kèm vị trí. Bạn vẫn có thể dùng tên địa danh.'; };
   clear.onclick = reset;
-  locate.onclick = () => {
+  const start = () => {
     reset();
-    if (!window.isSecureContext) { status.textContent = 'Cần mở trang bằng HTTPS để lấy vị trí. Bạn vẫn có thể dùng đáp án tên địa danh.'; return; }
-    if (!navigator.geolocation) { status.textContent = 'Trình duyệt không hỗ trợ lấy vị trí. Bạn vẫn có thể dùng tên địa danh.'; return; }
+    if(user?.guardian_managed || picker.hidden) return;
+    const unavailable=message=>{status.textContent=message;locate.hidden=false;locate.innerHTML=`${icon('pin')} Thử lại`;};
+    if (!window.isSecureContext) { unavailable('Cần mở trang bằng HTTPS để lấy vị trí. Bạn vẫn có thể dùng đáp án tên địa danh.'); return; }
+    const policy=document.permissionsPolicy || document.featurePolicy;
+    if(policy?.allowsFeature && !policy.allowsFeature('geolocation')) { unavailable('Trang đang bị cấu hình bảo mật chặn định vị. Quyền Cho phép trong Safari không vượt được cấu hình này; cần người vận hành kiểm tra máy chủ.');return; }
+    if (!navigator.geolocation) { unavailable('Trình duyệt không hỗ trợ lấy vị trí. Bạn vẫn có thể dùng tên địa danh.'); return; }
     const request = Symbol(); locationRequests.set(form, request);
-    form.dataset.locating = 'true'; locate.disabled = true; locate.textContent = 'Đang lấy vị trí…'; clear.textContent = 'Hủy'; clear.hidden = false;
-    status.textContent = 'Hãy cho phép quyền vị trí khi trình duyệt hỏi.';
-    const active = () => locationRequests.get(form) === request && form.isConnected && form.closest('dialog').open;
-    const finish = () => { invalidate(); clear.textContent = 'Bỏ vị trí'; };
-    navigator.geolocation.getCurrentPosition(position => {
+    form.dataset.locating = 'true'; locate.disabled = true; clear.textContent = 'Hủy lấy vị trí'; clear.hidden = false;
+    status.textContent = 'Đang tự lấy vị trí… Hãy chọn Cho phép nếu điện thoại hỏi quyền truy cập.';
+    const active = () => locationRequests.get(form) === request && form.isConnected && form.closest('dialog')?.open && (!details || details.open);
+    const finish = () => { invalidate(); clear.textContent = 'Bỏ vị trí';locate.hidden=false; };
+    const success = position => {
       if (!active()) return;
       finish();
       const {latitude: lat, longitude: lng, accuracy} = position.coords;
-      if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(accuracy) || accuracy > 150) { clear.hidden = true; status.textContent = 'Vị trí chưa đủ chính xác. Hãy bật định vị chính xác, ra nơi thoáng rồi thử lại hoặc dùng tên địa danh.'; return; }
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(accuracy) || accuracy<0 || accuracy > 150) {
+        clear.hidden = true;locate.innerHTML=`${icon('pin')} Thử lại`;
+        status.textContent = `Vị trí chưa đủ chính xác${Number.isFinite(accuracy)?' (sai số khoảng '+Math.ceil(accuracy)+' m)':''}. Bật Vị trí chính xác cho Safari trong cài đặt định vị iPhone rồi thử lại. Chưa đính kèm tọa độ.`;return;
+      }
       latitude.value = String(lat); longitude.value = String(lng);
-      status.textContent = `Đã lấy vị trí máy · Sai số khoảng ${Math.ceil(accuracy)} m. Chỉ dùng nếu đây là địa điểm bạn muốn chọn.`;
-    }, error => {
+      locate.innerHTML=`${icon('pin')} Cập nhật vị trí`;
+      status.textContent = `Đã tự lấy vị trí máy · Sai số khoảng ${Math.ceil(accuracy)} m. ${details?'Vị trí chỉ được gửi khi bạn bấm gửi dự đoán.':'Vị trí này sẽ đi kèm bài đăng. Nếu ảnh chụp ở nơi khác, chọn Bỏ vị trí.'}`;
+    };
+    const failure = error => {
       if (!active()) return;
-      finish(); clear.hidden = true;
-      status.textContent = ({1:'Bạn chưa cho phép vị trí. Mở quyền vị trí trong trình duyệt để thử lại, hoặc dùng tên địa danh.',2:'Chưa xác định được vị trí. Bật định vị trên máy rồi thử lại.',3:'Lấy vị trí quá lâu. Hãy thử lại ở nơi thoáng hơn.'})[error.code] || 'Không lấy được vị trí. Hãy thử lại hoặc dùng tên địa danh.';
-    }, {enableHighAccuracy:true, timeout:15000, maximumAge:0});
+      finish(); clear.hidden = true;locate.innerHTML=`${icon('pin')} Thử lại`;
+      status.textContent = ({1:'iPhone hoặc trình duyệt đang chặn truy cập vị trí. Dù trang đã được Cho phép trong Safari, hãy kiểm tra Cài đặt → Quyền riêng tư & Bảo mật → Dịch vụ định vị → Trang web Safari; bật định vị khi dùng và Vị trí chính xác. Sau đó quay lại thử lại.',2:'Thiết bị chưa xác định được vị trí. Kiểm tra Dịch vụ định vị, kết nối mạng rồi thử lại.',3:'Lấy vị trí quá lâu. Hãy thử lại ở nơi thoáng hơn; bạn vẫn đăng hoặc đoán bằng tên địa danh.'})[error.code] || 'Không lấy được vị trí. Hãy thử lại hoặc dùng tên địa danh.';
+    };
+    // Safari may fail a fresh high-accuracy lookup; try one recent/cached fix for unavailable/timeout, never retry permission denial.
+    const fallback = error => {
+      if(!active())return;
+      if(error.code===2 || error.code===3){
+        status.textContent='Định vị chính xác đang chậm, đang thử lại một lần…';
+        try { navigator.geolocation.getCurrentPosition(success,failure,{enableHighAccuracy:false,timeout:10000,maximumAge:30000}); }
+        catch(error) { failure({code:error.name==='SecurityError'?1:2}); }
+      }else failure(error);
+    };
+    try { navigator.geolocation.getCurrentPosition(success, fallback, {enableHighAccuracy:true, timeout:20000, maximumAge:30000}); }
+    catch(error) { failure({code:error.name==='SecurityError'?1:2}); }
   };
+  locate.onclick=start;locationStarters.set(form,start);
+  if(details)details.addEventListener('toggle',()=>{if(details.open)start();else reset();});
   form.addEventListener('reset', reset);
 }
 $('#create-form details').outerHTML = locationMarkup();
@@ -288,7 +313,7 @@ function setupDialog(dialog) {
 document.querySelectorAll('dialog').forEach(setupDialog);
 $('#explore').onclick = () => { showMainPage('explore'); loadFeed(); };
 $('#ranking').onclick = () => { showMainPage('ranking'); loadFeed(); window.scrollTo(0,0); };
-$('#create').onclick = () => { if (requireLogin()) $('#create-dialog').showModal(); };
+$('#create').onclick = () => { if (requireLogin()) { $('#create-dialog').showModal(); locationStarters.get($('#create-form'))?.(); } };
 $('#compose-trigger').onclick = $('#compose-camera').onclick = () => $('#create').click();
 $('#journey-action').onclick = () => $('#account').click();
 $('#all-ranking').onclick = () => $('#ranking').click();
@@ -303,11 +328,12 @@ $('#auth-form').onsubmit = event => { event.preventDefault(); const form = event
   const body=Object.fromEntries(new FormData(form));
   if (registerMode) {
     Object.assign(body,await consentPayload(form));
+    const proof=registrationEmailProof(form);if(proof)body.email_verification_token=proof;
     if (!body.guardian_email && !String(body.email || '').trim() && !String(body.phone || '').trim()) throw new Error('Nhập email hoặc số điện thoại để đăng ký.');
   }
   const result=await api(`/auth/${registerMode ? 'register' : 'login'}`,{method:'POST',body});
   if (result.status==='pending_guardian') { formMessage(form,result.message,'success'); toast(result.message); return; }
   token=result.token; user=result.user; saveSessionToken(token); form.reset(); $('#auth-dialog').close(); renderUser(); loadFeed(); toast(`Xin chào ${user.display_name || user.username}!`);
 }); };
-$('#create-form').onsubmit = event => { event.preventDefault(); const form = event.currentTarget; busy(form, async () => { const f = new FormData(form), image = f.get('image'); if (!form.elements.content_rights_confirmed.checked) throw new Error('Cần xác nhận quyền sử dụng ảnh và trách nhiệm nội dung.'); if (image.size > 8 * 1024 * 1024) throw new Error('Ảnh tối đa 8 MB.'); if (Boolean(f.get('latitude')) !== Boolean(f.get('longitude'))) throw new Error('Cần nhập cả hai tọa độ.'); const upload = new FormData(); upload.append('file', image); upload.append('rights_confirmed','true'); const {image_url,scan} = await api('/uploads',{method:'POST',body:upload}); const body = {title:f.get('title'),description:f.get('description'),answer:f.get('answer'),aliases:String(f.get('aliases') || '').split(/\r?\n/).map(value => value.trim()).filter(Boolean),image_url,content_rights_confirmed:true}; for (const key of ['latitude','longitude']) if (f.get(key) !== '') body[key] = Number(f.get(key)); const created=await api('/cases',{method:'POST',body}); $('#create-dialog').close(); form.reset(); page = 'explore'; await loadFeed(); toast(created.moderation_status==='pending' ? (scan?.sensitive ? 'Ảnh có cảnh báo nội dung nhạy cảm. Bài đang chờ người kiểm duyệt, chưa công khai.' : 'Bài đã gửi, đang chờ kiểm duyệt trước khi công khai.') : 'Thử thách đã sẵn sàng. Để mọi người khám phá nào!'); }); };
+$('#create-form').onsubmit = event => { event.preventDefault(); const form = event.currentTarget; busy(form, async () => { const f = new FormData(form), image = f.get('image'); if (image.size > 8 * 1024 * 1024) throw new Error('Ảnh tối đa 8 MB.'); if (Boolean(f.get('latitude')) !== Boolean(f.get('longitude'))) throw new Error('Cần nhập cả hai tọa độ.'); const upload = new FormData(); upload.append('file', image); upload.append('rights_confirmed','true'); const {image_url,scan} = await api('/uploads',{method:'POST',body:upload}); const body = {title:f.get('title'),description:f.get('description'),answer:f.get('answer'),aliases:String(f.get('aliases') || '').split(/\r?\n/).map(value => value.trim()).filter(Boolean),image_url,content_rights_confirmed:true}; for (const key of ['latitude','longitude']) if (f.get(key) !== '') body[key] = Number(f.get(key)); const created=await api('/cases',{method:'POST',body}); $('#create-dialog').close(); form.reset(); page = 'explore'; await loadFeed(); toast(created.moderation_status==='pending' ? (scan?.sensitive ? 'Ảnh có cảnh báo nội dung nhạy cảm. Bài đang chờ người kiểm duyệt, chưa công khai.' : 'Bài đã gửi, đang chờ kiểm duyệt trước khi công khai.') : 'Thử thách đã sẵn sàng. Để mọi người khám phá nào!'); }); };
 refreshUser(); loadFeed(); loadHunters();

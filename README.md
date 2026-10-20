@@ -93,7 +93,7 @@ Không commit `.env`, database, token hay ảnh người dùng. Giữ bản sao 
 
 ## Hồ sơ và nâng cấp từ MVP
 
-Nhấn tên tài khoản trên thanh đầu trang để sửa tên hiển thị, giới thiệu, email/SĐT hoặc đăng xuất. `GET /api/me` và `PATCH /api/me` yêu cầu token, chỉ trả thông tin liên hệ cho chính người dùng. Email/SĐT là duy nhất và chưa xác minh, không dùng để khôi phục mật khẩu hay tự động liên kết tài khoản xã hội. Đăng ký mới cần ít nhất một thông tin liên hệ; tài khoản cũ được giữ nguyên và bổ sung ở Hồ sơ.
+Nhấn tên tài khoản trên thanh đầu trang để sửa tên hiển thị, giới thiệu, email/SĐT hoặc đăng xuất. `GET /api/me` và `PATCH /api/me` yêu cầu token, chỉ trả thông tin liên hệ cho chính người dùng. Email/SĐT là duy nhất. Email được xác minh bằng mã trước khi đăng ký hoặc đổi địa chỉ; số điện thoại chưa có SMS OTP. Không dùng các địa chỉ chưa xác minh để khôi phục mật khẩu hay tự động liên kết tài khoản xã hội. Đăng ký mới cần ít nhất một thông tin liên hệ; tài khoản cũ được giữ nguyên và bổ sung ở Hồ sơ.
 
 Bản cập nhật này tự động thêm các cột hồ sơ và bảng `external_identities` khi khởi động, áp dụng cho schema MVP trong commit `8973c8a`, không xóa dữ liệu. Chạy nâng cấp khi chỉ có một tiến trình API (Compose mặc định). Sao lưu trước khi nâng cấp; không dùng `docker compose down -v`.
 
@@ -103,10 +103,14 @@ docker compose up -d --build
 docker compose logs --tail=100 api
 ```
 
-Cấu trúc danh tính ngoài có khóa duy nhất `(provider, subject)` và `(user_id, provider)` để tích hợp Google/Facebook sau. Hiện chưa có OAuth, nút đăng nhập Google/Facebook, xác minh email tài khoản thường hay SMS OTP. Riêng luồng người đại diện có xác nhận qua liên kết email (cần SMTP), chưa thay thế xác thực danh tính/quan hệ đại diện. Khi tích hợp OAuth cần cấu hình app/redirect URI từ nhà cung cấp, kiểm tra token/issuer/audience/nonce/state phía server và chỉ liên kết qua phiên người dùng đã xác thực; không tự ghép bằng email chưa xác minh.
+Cấu trúc danh tính ngoài có khóa duy nhất `(provider, subject)` và `(user_id, provider)` để tích hợp Google/Facebook sau. Hiện chưa có OAuth, nút đăng nhập Google/Facebook hoặc SMS OTP. Tài khoản thường đã có mã xác minh email (cần SMTP). Riêng luồng người đại diện có xác nhận qua liên kết email (cần SMTP), chưa thay thế xác thực danh tính/quan hệ đại diện. Khi tích hợp OAuth cần cấu hình app/redirect URI từ nhà cung cấp, kiểm tra token/issuer/audience/nonce/state phía server và chỉ liên kết qua phiên người dùng đã xác thực; không tự ghép bằng email chưa xác minh.
 
 ## Kiểm duyệt ảnh và báo cáo
 
 Staff dùng cổng riêng `/staff/login` với mật khẩu + OTP, cookie HttpOnly 8 giờ và chống dò mật khẩu dùng database. Cần cấu hình `STAFF_TOTP_KEY` và thiết lập ứng dụng Authenticator trên terminal server; xem [hướng dẫn bảo mật staff](docs/staff-security.md). Phiên quản trị cũ và đăng nhập thường không thay thế bước OTP.
 
 Ảnh quét thành công, không có cảnh báo nhạy cảm được tự duyệt; các khuôn mặt phát hiện được đã che. Ảnh có cảnh báo, chưa quét hoặc quét lỗi chờ người duyệt. Có thể tắt tự duyệt để kiểm tra thủ công tất cả. Docker cài model quét cục bộ NudeNet; cần tạo tài khoản có quyền kiểm duyệt qua CLI. Xem [cấu hình, cấp quyền, che ảnh và giới hạn](docs/moderation.md). Bộ quét không tự phát hiện biển số; người duyệt có công cụ chọn vùng che. Bài cũ không tự chuyển vào hàng chờ.
+
+## Xác minh email bằng mã
+
+Đăng ký bằng email cần xác minh bằng mã 6 số hoặc liên kết trong hộp thư; đổi email chỉ có hiệu lực sau khi xác minh địa chỉ mới. Mã hết hạn sau 10 phút, tối đa 5 lượt thử và có giới hạn gửi lại. Xem [cấu hình SMTP và luồng xác minh](docs/email-verification.md).
