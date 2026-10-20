@@ -73,6 +73,57 @@ header.sidebar{background:linear-gradient(180deg,#fff,#f4fbfd);border-right-colo
 .legal-footer{font-size:11px;gap:4px 16px}
 .legal-footer a{display:inline-flex;align-items:center;min-height:44px;color:#607786;text-decoration:none}
 .legal-footer a:hover,.legal-footer a:focus-visible{color:#08789d;text-decoration:underline}
+.page-hidden{display:none!important}
+#notifications-page[hidden]{display:none}
+#notifications-page{min-width:0}
+#notifications-page h2{font-size:28px;margin-bottom:20px}
+.screen-header{display:none}
+.report-button{background:none;border:0;color:#607786;font-size:12px;min-height:44px;padding:6px 8px}
+.photo-frame{position:relative}
+.photo-report{position:absolute;top:8px;right:8px;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:0;border-radius:50%;background:transparent;color:#fff;line-height:1}
+.photo-report span{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;background:#103d46c9;box-shadow:0 1px 5px #0002}
+.photo-report svg{width:17px;height:17px}
+.photo-report:hover span{background:#075d70}
+.moderation-card{padding:18px;margin:18px 0;background:#fff;border:1px solid #c7e0e8;border-radius:12px;overflow-wrap:anywhere}
+.moderation-card h3{font-size:18px}.moderation-card p{font-size:14px}
+.moderation-actions{display:flex;gap:10px;flex-wrap:wrap}
+.moderation-warning{color:#855e1b;background:#fff4df;padding:12px;border-radius:8px}
+.review-canvas{display:block;max-width:100%;height:auto;margin-top:16px;touch-action:none;cursor:crosshair}
+.review-canvas[hidden]{display:none}select{font:inherit;width:100%;padding:12px;margin-top:8px;border:1px solid #cad4c3;border-radius:7px;background:white;color:inherit}
+#account-moderation{margin-top:28px;border-top:1px solid #c7e0e8;padding-top:20px}
+.privacy-actions>button[hidden]{display:none}
+#profile-dialog .dialog-top{align-items:center;gap:16px;justify-content:space-between;border-bottom:1px solid #dcebf0;margin-bottom:24px;padding-bottom:16px}
+#profile-dialog .dialog-top h2{margin:0;padding:0;font-size:25px;line-height:1.35;clear:none}
+@media(min-width:521px){
+  #profile-dialog{width:min(820px,calc(100% - 48px));padding:28px 36px 36px}
+  #profile-dialog .dialog-top{top:-28px}
+  #profile-dialog .close{min-width:44px;width:44px;height:44px;min-height:44px;padding:0;font-size:0;border-radius:50%;flex-shrink:0}
+  #profile-dialog .close::before{content:'×';font-size:25px;line-height:1}
+  #profile-dialog> .eyebrow{margin-bottom:18px}
+  #profile-form{display:grid;grid-template-columns:1fr 1fr;gap:0 24px}
+  #profile-form>label{margin:12px 0}
+  #profile-form>label:has(textarea),#profile-form>.muted,#profile-form>.primary{grid-column:1/-1}
+  #profile-form>.primary{width:auto;min-width:200px;justify-self:end}
+}
+@media(max-width:520px){
+  .sidebar nav button.active{background:transparent;box-shadow:none;color:#087d94;border-top:3px solid #11a9c2;border-radius:0}
+  .sidebar nav button{border-top:3px solid transparent}
+  body.subpage .mobile-brand{display:none}
+  body.subpage .workspace{padding-top:0}
+  body.subpage .screen-header{display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:3;background:#faffff;border-bottom:1px solid #dcebf0;padding:8px 12px;padding-top:calc(8px + env(safe-area-inset-top))}
+  #screen-back{border:0;background:none;color:#174f5a;font-size:36px;line-height:1;min-width:44px;min-height:44px;padding:0}
+  .screen-header strong{font-size:18px}
+  body.subpage .feed-heading{padding-top:20px}
+  #notifications-page{padding:20px 16px}
+  #notifications-page>.eyebrow,#notifications-page>h2{display:none}
+  dialog[open],dialog.wide[open]{position:fixed;inset:0;margin:0;width:100%;max-width:none;height:100dvh;max-height:100dvh;border-radius:0;padding:0 18px calc(24px + env(safe-area-inset-bottom));background:#faffff}
+  dialog .dialog-top{position:sticky;top:0;z-index:3;background:#faffff;border-bottom:1px solid #dcebf0;margin:0 -18px 20px;padding:8px 12px;padding-top:calc(8px + env(safe-area-inset-top));display:flex;justify-content:flex-start}
+  dialog .close{float:none;min-width:44px;min-height:44px;padding:0;border:0;font-size:0;background:none;box-shadow:none}
+  dialog .close::before{content:'‹';font-size:36px;line-height:1}
+  dialog h2{clear:none;margin-top:12px}
+  #profile-dialog .dialog-top{flex-direction:row-reverse;justify-content:flex-end;margin-bottom:20px;padding-bottom:8px}
+  #profile-dialog .dialog-top h2{font-size:18px}
+}
 @media(min-width:1041px){
   .right-rail .legal-footer{display:flex;flex-direction:row;flex-wrap:nowrap;justify-content:flex-start;gap:8px;margin:0;width:100%;align-items:center}
   .right-rail .legal-footer a{font-size:10px;line-height:1.5;min-height:44px;white-space:nowrap}

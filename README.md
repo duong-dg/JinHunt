@@ -104,3 +104,7 @@ docker compose logs --tail=100 api
 ```
 
 Cấu trúc danh tính ngoài có khóa duy nhất `(provider, subject)` và `(user_id, provider)` để tích hợp Google/Facebook sau. Hiện chưa có OAuth, nút đăng nhập Google/Facebook, xác minh email tài khoản thường hay SMS OTP. Riêng luồng người đại diện có xác nhận qua liên kết email (cần SMTP), chưa thay thế xác thực danh tính/quan hệ đại diện. Khi tích hợp OAuth cần cấu hình app/redirect URI từ nhà cung cấp, kiểm tra token/issuer/audience/nonce/state phía server và chỉ liên kết qua phiên người dùng đã xác thực; không tự ghép bằng email chưa xác minh.
+
+## Kiểm duyệt ảnh và báo cáo
+
+Ảnh quét thành công, không có cảnh báo nhạy cảm được tự duyệt; các khuôn mặt phát hiện được đã che. Ảnh có cảnh báo, chưa quét hoặc quét lỗi chờ người duyệt. Có thể tắt tự duyệt để kiểm tra thủ công tất cả. Docker cài model quét cục bộ NudeNet; cần tạo tài khoản có quyền kiểm duyệt qua CLI. Xem [cấu hình, cấp quyền, che ảnh và giới hạn](docs/moderation.md). Bộ quét không tự phát hiện biển số; người duyệt có công cụ chọn vùng che. Bài cũ không tự chuyển vào hàng chờ.

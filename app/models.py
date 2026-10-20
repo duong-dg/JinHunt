@@ -16,6 +16,8 @@ class User(Base):
     player_birth_date = Column(Date, nullable=True)
     account_status = Column(String(30), default="active", nullable=False)
     guardian_managed = Column(Integer, default=0, nullable=False)
+    role = Column(String(20), default="user", nullable=False)
+    suspended = Column(Integer, default=0, nullable=False)
 
 class LegalConsent(Base):
     __tablename__ = "legal_consents"
@@ -75,6 +77,33 @@ class Token(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     expires_at = Column(Float, nullable=False)
 
+class ImageReview(Base):
+    __tablename__ = "image_reviews"
+    image_url = Column(String(255), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    status = Column(String(20), default="pending", nullable=False)
+    scan = Column(Text, nullable=False)
+    created_at = Column(Float, nullable=False)
+
+class ContentReport(Base):
+    __tablename__ = "content_reports"
+    id = Column(Integer, primary_key=True)
+    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False)
+    reporter_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    reason = Column(String(40), nullable=False)
+    details = Column(String(1000), nullable=False, default="")
+    status = Column(String(20), default="open", nullable=False)
+    created_at = Column(Float, nullable=False)
+
+class ModerationAudit(Base):
+    __tablename__ = "moderation_audits"
+    id = Column(Integer, primary_key=True)
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    action = Column(String(30), nullable=False)
+    target = Column(String(255), nullable=False)
+    reason = Column(String(1000), nullable=False)
+    created_at = Column(Float, nullable=False)
+
 class Case(Base):
     __tablename__ = "cases"
     id = Column(Integer, primary_key=True)
@@ -83,6 +112,7 @@ class Case(Base):
     description = Column(Text, nullable=False, default="")
     image_url = Column(String(255), nullable=False)
     answer = Column(String(200), nullable=False)
+    moderation_status = Column(String(20), default="published", nullable=False)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     radius_meters = Column(Integer, default=150, nullable=False)

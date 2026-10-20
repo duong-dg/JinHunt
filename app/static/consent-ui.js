@@ -33,7 +33,7 @@ function openConsentDialog() { if (!$('#consent-dialog').open) $('#consent-dialo
 $('#consent-form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget;busy(form,async()=>{
   const result=await api('/me/legal-consent',{method:'POST',body:await consentPayload(form)});
   $('#consent-dialog').close();
-  if (result.status==='pending_guardian') {token='';user=null;sessionStorage.removeItem('jinhunt-token');renderUser();toast(result.message);}
+  if (result.status==='pending_guardian') {token='';user=null;saveSessionToken('');renderUser();toast(result.message);}
   else {await refreshUser();toast('Đã ghi nhận phiên bản điều khoản và quyền riêng tư bạn chấp thuận.');}
 });};
 $('#create-form [type=submit]').insertAdjacentHTML('beforebegin','<label class="consent-check content-rights"><input type="checkbox" name="content_rights_confirmed" required><span>Tôi có quyền sử dụng và đăng ảnh này; đã có sự cho phép cần thiết về hình ảnh/quyền riêng tư và chịu trách nhiệm về nội dung theo pháp luật. Tôi đã đọc <a href="/copyright" target="_blank" rel="noopener noreferrer">quy tắc bản quyền</a>. Không đăng thông tin nhận diện trẻ em dưới 16 tuổi trong bản thử nghiệm.</span></label>');
@@ -41,7 +41,7 @@ $('.avatar-editor').insertAdjacentHTML('afterend','<label class="consent-check a
 $('#profile-form').insertAdjacentHTML('afterend','<div class="privacy-actions"><a href="/privacy" target="_blank" rel="noopener noreferrer">Đọc chính sách quyền riêng tư ↗</a><a href="/support?kind=deletion" target="_blank" rel="noopener noreferrer">Yêu cầu xóa / nhận bản sao dữ liệu ↗</a><button type="button" id="review-consent" class="text-button">Xem / xác nhận điều khoản hiện tại</button><button type="button" id="withdraw-consent" class="text-button">Rút lại sự đồng ý xử lý dữ liệu</button></div>');
 $('#review-consent').onclick=()=>{$('#profile-dialog').close();openConsentDialog();};
 $('#withdraw-consent').onclick=()=>{$('#profile-dialog').close();$('#withdraw-dialog').showModal();};
-$('#withdraw-form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget;busy(form,async()=>{const result=await api('/me/withdraw-consent',{method:'POST'});token='';user=null;sessionStorage.removeItem('jinhunt-token');$('#withdraw-dialog').close();renderUser();loadFeed();toast(result.message);});};
+$('#withdraw-form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget;busy(form,async()=>{const result=await api('/me/withdraw-consent',{method:'POST'});token='';user=null;saveSessionToken('');$('#withdraw-dialog').close();renderUser();loadFeed();toast(result.message);});};
 document.body.insertAdjacentHTML('beforeend','<nav class="legal-footer" aria-label="Điều khoản và quyền riêng tư"><a href="/terms" target="_blank" rel="noopener noreferrer">Điều khoản</a><a href="/privacy" target="_blank" rel="noopener noreferrer">Quyền riêng tư</a><a href="/copyright" target="_blank" rel="noopener noreferrer">Bản quyền</a><a href="/support" target="_blank" rel="noopener noreferrer">Hỗ trợ</a></nav>');
 const policyLayout=window.matchMedia('(min-width:1041px)');
 function placePolicies(){

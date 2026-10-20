@@ -1,3 +1,4 @@
+import json
 import hashlib
 import hmac
 import io
@@ -13,6 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, Query, Form
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
@@ -20,8 +22,10 @@ from sqlalchemy import select, func, update, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
-from .models import User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation
+from .models import User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation, ImageReview
 from .migrations import upgrade
+from .image_safety import scan_image
+from .moderation import build_router as moderation_router
 from .legal import ConsentInput, VERSION as LEGAL_VERSION, age, latest_consent, record_consent, start_guardian, build_router
 
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
@@ -35,13 +39,6 @@ async def lifespan(app):
 
 app = FastAPI(title="JinHunt API", version="0.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-@app.get("/uploads/{filename}",include_in_schema=False)
-def uploaded_image(filename: str, db: Session = Depends(get_db)):
-    match = re.fullmatch(r"(?:avatar-)?([0-9]+)-[a-f0-9]{32}\.jpg",filename)
-    owner = db.get(User,int(match.group(1))) if match else None
-    if not owner or owner.account_status != "active" or not (UPLOAD_DIR/filename).is_file():
-        raise HTTPException(404,"Không tìm thấy ảnh.")
-    return FileResponse(UPLOAD_DIR/filename,media_type="image/jpeg",headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"})
 
 def normalize(value):
     value = unicodedata.normalize("NFD", value.lower().replace("đ", "d"))
@@ -57,7 +54,7 @@ def private_user(user, db=None):
     return {**public_user(user), "email": user.email, "phone": user.phone,
             "contact_verified": False, "guardian_managed":bool(user.guardian_managed),
             "needs_legal_consent":bool(db is not None and (not user.player_birth_date or not latest_consent(db,user))),
-            "legal_version":LEGAL_VERSION}
+            "role":user.role, "legal_version":LEGAL_VERSION}
 
 def current_user(authorization: str = Header(default=""), db: Session = Depends(get_db)):
     raw = authorization.removeprefix("Bearer ")
@@ -65,7 +62,7 @@ def current_user(authorization: str = Header(default=""), db: Session = Depends(
     if not authorization.startswith("Bearer ") or not token or token.expires_at < time.time():
         raise HTTPException(401, "Vui lòng đăng nhập lại.")
     user = db.get(User, token.user_id)
-    if user.account_status != "active":
+    if user.account_status != "active" or user.suspended:
         raise HTTPException(403,"Tài khoản chưa được kích hoạt hoặc đã dừng. Hãy kiểm tra xác nhận người đại diện hoặc liên hệ hỗ trợ.")
     return user
 
@@ -76,6 +73,30 @@ def participant(user: User = Depends(current_user), db: Session = Depends(get_db
 
 def optional_user(authorization: str = Header(default=""), db: Session = Depends(get_db)):
     return current_user(authorization, db) if authorization else None
+
+@app.get('/uploads/{filename}',include_in_schema=False)
+def uploaded_image(filename:str,db:Session=Depends(get_db),viewer:User|None=Depends(optional_user)):
+    match=re.fullmatch(r"(?:avatar-)?([0-9]+)-[a-f0-9]{32}\.jpg",filename)
+    owner=db.get(User,int(match.group(1))) if match else None
+    url='/uploads/'+filename
+    review=db.get(ImageReview,url)
+    staff=bool(viewer and viewer.role in {'moderator','admin'})
+    private=bool(viewer and (viewer.id==int(match.group(1)) if match else False)) or staff
+    published=db.scalar(select(Case.id).where(Case.image_url==url,Case.moderation_status=='published'))
+    visible=owner and owner.account_status=='active' and not owner.suspended and (not review or review.status=='approved') and (owner.avatar_url==url or published)
+    if not owner or not (upload_dir_path:=UPLOAD_DIR/filename).is_file() or (not visible and not private) or (review and review.status=='removed' and not staff):
+        raise HTTPException(404,'Không tìm thấy ảnh.')
+    return FileResponse(upload_dir_path,media_type='image/jpeg',headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+
+async def review_upload(image_url,user,db):
+    scan=await run_in_threadpool(scan_image,UPLOAD_DIR/image_url.split('/')[-1])
+    auto_clean = (os.getenv('AUTO_APPROVE_SCANNED','1')=='1'
+                  and scan.get('state')=='scanned' and scan.get('sensitive') is False)
+    development_bypass = os.getenv('MODERATION_REQUIRE_REVIEW','1')=='0'
+    status='approved' if auto_clean or (development_bypass and not scan.get('sensitive') and scan.get('state')!='error') else 'pending'
+    scan['decision']='auto_approved' if auto_clean else 'development_bypass' if status=='approved' else 'human_review'
+    db.add(ImageReview(image_url=image_url,user_id=user.id,status=status,scan=json.dumps(scan,ensure_ascii=False),created_at=time.time()))
+    return status,scan
 
 def notify(db, case, actor, kind, source_id=None):
     if case.creator_id == actor.id:
@@ -234,7 +255,7 @@ def login(data: Credentials, db: Session = Depends(get_db)):
         user = db.scalar(select(User).where(User.username == identifier))
     if not user or not hmac.compare_digest(user.password_hash, password_hash(data.password, user.password_hash.split(":")[0])):
         raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu chưa đúng.")
-    if user.account_status != "active":
+    if user.account_status != "active" or user.suspended:
         raise HTTPException(403,"Tài khoản đang chờ người đại diện xác nhận hoặc đã dừng. Hãy kiểm tra email người đại diện/liên hệ hỗ trợ.")
     return session_response(user, db)
 
@@ -291,19 +312,22 @@ async def upload(file: UploadFile = File(), rights_confirmed: bool = Form(defaul
     if not rights_confirmed:
         raise HTTPException(400,"Cần xác nhận quyền sử dụng và quyền đăng ảnh trước khi tải lên.")
     image_url = await save_image(file,user)
+    status,scan=await review_upload(image_url,user,db)
     db.add(ContentAttestation(user_id=user.id,resource=image_url,legal_version=LEGAL_VERSION,accepted_at=time.time()))
     db.commit()
-    return {"image_url":image_url}
+    return {"image_url":image_url,"moderation_status":status,"scan":scan}
 
 @app.post("/api/me/avatar")
 async def upload_avatar(file: UploadFile = File(), rights_confirmed: bool = Form(default=False), user: User = Depends(participant), db: Session = Depends(get_db)):
     if not rights_confirmed:
         raise HTTPException(400,"Cần xác nhận quyền sử dụng ảnh đại diện trước khi tải lên.")
-    user.avatar_url = await save_image(file, user, avatar=True)
-    db.add(ContentAttestation(user_id=user.id,resource=user.avatar_url,legal_version=LEGAL_VERSION,accepted_at=time.time()))
+    image_url = await save_image(file, user, avatar=True)
+    status,scan=await review_upload(image_url,user,db)
+    if status=="approved": user.avatar_url=image_url
+    db.add(ContentAttestation(user_id=user.id,resource=image_url,legal_version=LEGAL_VERSION,accepted_at=time.time()))
     db.commit()
     db.refresh(user)
-    return private_user(user,db)
+    return {**private_user(user,db),"moderation_status":status,"scan":scan}
 
 @app.delete("/api/me/avatar")
 def remove_avatar(user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -336,14 +360,14 @@ class CaseCreate(BaseModel):
 
 def get_case(case_id, db):
     case = db.get(Case, case_id)
-    if not case or db.get(User,case.creator_id).account_status != "active":
+    if not case or case.moderation_status != "published" or db.get(User,case.creator_id).account_status != "active" or db.get(User,case.creator_id).suspended:
         raise HTTPException(404, "Không tìm thấy thử thách.")
     return case
 
 def public_case(case, db, viewer=None):
     creator = db.get(User, case.creator_id)
     return {"id": case.id, "title": case.title, "description": case.description,
-            "image_url": case.image_url, "creator": creator.username, "creator_id": creator.id,
+            "moderation_status":case.moderation_status, "image_url": case.image_url, "creator": creator.username, "creator_id": creator.id,
             "creator_display_name": creator.display_name or creator.username, "creator_avatar_url": creator.avatar_url,
             "likes": db.scalar(select(func.count()).select_from(Like).where(Like.case_id == case.id)),
             "liked_by_me": bool(viewer and db.scalar(select(Like.id).where(Like.user_id == viewer.id, Like.case_id == case.id))),
@@ -360,6 +384,9 @@ def create_case(data: CaseCreate, user: User = Depends(participant), db: Session
     if not re.fullmatch(rf"{user.id}-[a-f0-9]{{32}}\.jpg", filename) or not (UPLOAD_DIR / filename).is_file():
         raise HTTPException(400, "Vui lòng tải ảnh của bạn lên trước.")
     case = Case(**data.model_dump(exclude={"aliases","content_rights_confirmed"}), creator_id=user.id)
+    review=db.get(ImageReview,data.image_url)
+    case.moderation_status="published" if review and review.status=="approved" else "pending"
+    if review and review.status=="removed": raise HTTPException(400,"Ảnh đã bị gỡ; hãy tải ảnh khác.")
     db.add(case)
     db.flush()
     for answer in {normalize(alias) for alias in data.aliases} - {normalize(data.answer)}:
@@ -371,7 +398,7 @@ def create_case(data: CaseCreate, user: User = Depends(participant), db: Session
 
 @app.get("/api/cases")
 def list_cases(offset: int = Query(default=0, ge=0), limit: int = Query(default=24, ge=1, le=100), db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
-    return [public_case(c, db, viewer) for c in db.scalars(select(Case).join(User,Case.creator_id==User.id).where(User.account_status=="active").order_by(Case.id.desc()).offset(offset).limit(limit))]
+    return [public_case(c, db, viewer) for c in db.scalars(select(Case).join(User,Case.creator_id==User.id).where(User.account_status=="active",User.suspended==0,Case.moderation_status=="published").order_by(Case.id.desc()).offset(offset).limit(limit))]
 
 @app.get("/api/cases/{case_id}")
 def case_detail(case_id: int, db: Session = Depends(get_db), viewer: User | None = Depends(optional_user)):
@@ -425,7 +452,7 @@ def comments(case_id: int, db: Session = Depends(get_db)):
     result = []
     for c in rows:
         author = db.get(User, c.user_id)
-        if author.account_status != "active":
+        if author.account_status != "active" or author.suspended:
             result.append({"id":c.id,"username":"account-paused","display_name":"Tài khoản đã dừng","avatar_url":None,"content":"Bình luận không còn hiển thị.","is_hidden":True,"created_at":c.created_at})
             continue
         result.append({"id": c.id, "username": author.username,
@@ -490,7 +517,7 @@ def notifications(before_id: int | None = Query(default=None, ge=1), user: User 
     items = []
     for row in rows:
         actor, case = db.get(User, row.actor_id), db.get(Case, row.case_id)
-        actor_data = public_user(actor) if actor.account_status=="active" else {"id":actor.id,"username":"account-paused","display_name":"Tài khoản đã dừng","avatar_url":None}
+        actor_data = public_user(actor) if actor.account_status=="active" and not actor.suspended else {"id":actor.id,"username":"account-paused","display_name":"Tài khoản đã dừng","avatar_url":None}
         items.append({"id": row.id, "kind": row.kind, "actor": actor_data, "case_id": case.id,
                       "case_title": case.title if db.get(User,case.creator_id).account_status=="active" else "Bài không còn hiển thị", "is_read": bool(row.is_read), "created_at": row.created_at})
     return {"items": items, "unread_count": db.scalar(select(func.count()).select_from(Notification).where(Notification.recipient_id == user.id, Notification.is_read == 0)),
@@ -516,6 +543,8 @@ def read_notification(notification_id: int, user: User = Depends(current_user), 
 
 @app.get("/api/leaderboard")
 def leaderboard(db: Session = Depends(get_db)):
-    return [public_user(u) for u in db.scalars(select(User).where(User.account_status=="active").order_by(User.total_xp.desc(), User.id).limit(20))]
+    return [public_user(u) for u in db.scalars(select(User).where(User.account_status=="active",User.suspended==0).order_by(User.total_xp.desc(), User.id).limit(20))]
 
 app.include_router(build_router(current_user,password_hash))
+
+app.include_router(moderation_router(current_user,get_case,UPLOAD_DIR))

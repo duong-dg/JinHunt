@@ -1,4 +1,5 @@
 import io
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,10 +11,130 @@ from app.database import Base, get_db
 from app.main import app
 from app.legal import VERSION
 
+def staff_account(client,username,role='moderator'):
+    from app.models import User
+    headers=account(client,username)
+    with next(app.dependency_overrides[get_db]()) as db:
+        user=db.scalar(select(User).where(User.username==username));user.role=role;db.commit()
+    return headers
+
+def test_moderation_private_queue_redaction_reports_and_suspension(client,monkeypatch):
+    from app.models import ModerationAudit
+    monkeypatch.setenv('MODERATION_REQUIRE_REVIEW','1')
+    owner=account(client,'reviewowner');other=account(client,'reviewother')
+    moderator=staff_account(client,'reviewmod');admin=staff_account(client,'reviewadmin','admin')
+    image=io.BytesIO();Image.new('RGB',(100,80),'red').save(image,'PNG')
+    uploaded=client.post('/api/uploads',headers=owner,files={'file':('test.png',image.getvalue(),'image/png')},data={'rights_confirmed':'true'}).json()
+    url=uploaded['image_url']
+    assert uploaded['moderation_status']=='pending'
+    assert uploaded['scan']['state']=='unavailable'
+    assert client.get(url).status_code==404
+    assert client.get(url,headers=other).status_code==404
+    assert client.get(url,headers=owner).status_code==200
+    assert client.get(url,headers=moderator).status_code==200
+    created=client.post('/api/cases',headers=owner,json={'title':'Review me','answer':'secret place','image_url':url,'content_rights_confirmed':True}).json()
+    case_id=created['id']
+    assert created['moderation_status']=='pending'
+    assert client.get('/api/cases').json()==[]
+    assert client.get(f'/api/cases/{case_id}').status_code==404
+    assert client.get('/api/moderation/queue',headers=other).status_code==403
+    assert client.post(f'/api/moderation/cases/{case_id}',headers=moderator,json={'action':'approve','reason':'Checked content'}).status_code==409
+    redacted=client.post('/api/moderation/images/redact',headers=moderator,json={'image_url':url,'boxes':[[.1,.1,.4,.4]],'reason':'Hide private detail'})
+    assert redacted.status_code==200,redacted.text
+    new_url=redacted.json()['image_url'];assert new_url!=url
+    assert client.get(url).status_code==404
+    assert client.post('/api/moderation/images/decision',headers=moderator,json={'image_url':url,'action':'approve','reason':'Stale original request'}).status_code==409
+    assert client.post('/api/moderation/images/decision',headers=moderator,json={'image_url':new_url,'action':'approve','reason':'Checked redaction'}).status_code==200
+    assert client.post(f'/api/moderation/cases/{case_id}',headers=moderator,json={'action':'approve','reason':'Checked content'}).status_code==200
+    assert client.get(new_url).status_code==200
+    assert client.get(f'/api/cases/{case_id}').status_code==200
+    report=client.post(f'/api/cases/{case_id}/reports',headers=other,json={'reason':'privacy','details':'Please check the image'})
+    assert report.status_code==201
+    assert len(client.get('/api/moderation/queue',headers=moderator).json()['reports'])==1
+    owner_id=created['creator_id']
+    assert client.post(f'/api/moderation/users/{owner_id}/suspension',headers=moderator,json={'suspended':True,'reason':'Repeated violations'}).status_code==200
+    assert client.get('/api/me',headers=owner).status_code==401
+    assert client.get(new_url).status_code==404
+    assert client.get('/api/cases').json()==[]
+    assert client.post(f'/api/moderation/users/{owner_id}/suspension',headers=moderator,json={'suspended':False,'reason':'Appeal reviewed'}).status_code==403
+    assert client.post(f'/api/moderation/users/{owner_id}/suspension',headers=admin,json={'suspended':False,'reason':'Appeal reviewed'}).status_code==200
+    assert client.post(f'/api/moderation/cases/{case_id}',headers=moderator,json={'action':'remove','reason':'Privacy violation'}).status_code==200
+    assert client.get(new_url).status_code==404
+    assert client.get(f'/api/cases/{case_id}/comments').status_code==404
+    assert client.post(f'/api/cases/{case_id}/like',headers=other).status_code in (404,405)
+    with next(app.dependency_overrides[get_db]()) as db:
+        assert len(list(db.scalars(select(ModerationAudit))))>=6
+
+def test_scanner_failure_faces_and_sensitive_detection(tmp_path,monkeypatch):
+    from app import image_safety
+    monkeypatch.setenv('IMAGE_SCANNER','nudenet')
+    image=tmp_path/'sample.jpg'
+    Image.effect_noise((100,100),100).convert('RGB').save(image)
+    before=image.read_bytes()
+    class FakeDetector:
+        def detect(self,path):
+            return [{'class':'FACE_MALE','score':.9,'box':[10,10,40,40]},{'class':'MALE_GENITALIA_EXPOSED','score':.9,'box':[60,60,20,20]}]
+    monkeypatch.setattr(image_safety,'detector',lambda:FakeDetector())
+    result=image_safety.scan_image(image)
+    assert result['state']=='scanned' and result['faces_blurred']==1 and result['sensitive']
+    assert image.read_bytes()!=before
+    def unavailable(): raise RuntimeError('model unavailable')
+    monkeypatch.setattr(image_safety,'detector',unavailable)
+    assert image_safety.scan_image(image)['state']=='error'
+
+def test_avatar_pending_not_public_until_approved(client,monkeypatch):
+    monkeypatch.setenv('MODERATION_REQUIRE_REVIEW','1')
+    owner=account(client,'avatarpending');moderator=staff_account(client,'avatarmod')
+    image=io.BytesIO();Image.new('RGB',(80,80),'blue').save(image,'PNG')
+    result=client.post('/api/me/avatar',headers=owner,files={'file':('avatar.png',image.getvalue(),'image/png')},data={'rights_confirmed':'true'}).json()
+    assert result['avatar_url'] is None and result['moderation_status']=='pending'
+    row=client.get('/api/moderation/queue',headers=moderator).json()['images'][0]
+    assert client.get(row['image_url']).status_code==404
+    client.post('/api/moderation/images/decision',headers=moderator,json={'image_url':row['image_url'],'action':'approve','reason':'Avatar checked'})
+    assert client.get('/api/me',headers=owner).json()['avatar_url']==row['image_url']
+    assert client.get(row['image_url']).status_code==200
+
+def test_failed_scan_cannot_auto_publish_and_role_not_self_assigned(client,monkeypatch):
+    from app import main
+    monkeypatch.setattr(main,'scan_image',lambda path:{'state':'error','warnings':['model failed']})
+    response=client.post('/api/auth/register',json={'username':'notstaff','password':'test-password-123','email':'notstaff@example.com','role':'admin',**LEGAL_FIELDS})
+    assert response.status_code==422
+    headers=account(client,'notstaff')
+    assert client.get('/api/me',headers=headers).json()['role']=='user'
+    assert client.get('/api/moderation/queue',headers=headers).status_code==403
+    image=io.BytesIO();Image.new('RGB',(80,80),'blue').save(image,'PNG')
+    result=client.post('/api/uploads',headers=headers,files={'file':('a.png',image.getvalue(),'image/png')},data={'rights_confirmed':'true'}).json()
+    assert result['moderation_status']=='pending'
+    assert client.get(result['image_url']).status_code==404
+
+@pytest.mark.parametrize('scan,expected',[
+    ({'state':'scanned','sensitive':False,'faces_blurred':0},'approved'),
+    ({'state':'scanned','sensitive':False,'faces_blurred':2},'approved'),
+    ({'state':'scanned','sensitive':True,'faces_blurred':1},'pending'),
+    ({'state':'error','sensitive':False},'pending'),
+    ({'state':'unavailable','sensitive':False},'pending'),
+    ({'state':'scanned'},'pending'),
+])
+def test_automatic_review_only_after_successful_clean_scan(client,monkeypatch,scan,expected):
+    from app import main
+    monkeypatch.setenv('MODERATION_REQUIRE_REVIEW','1')
+    monkeypatch.setenv('AUTO_APPROVE_SCANNED','1')
+    monkeypatch.setattr(main,'scan_image',lambda path:dict(scan))
+    owner=account(client,'autouser')
+    image=io.BytesIO();Image.new('RGB',(80,80),'blue').save(image,'PNG')
+    result=client.post('/api/uploads',headers=owner,files={'file':('a.png',image.getvalue(),'image/png')},data={'rights_confirmed':'true'}).json()
+    assert result['moderation_status']==expected
+    posted=client.post('/api/cases',headers=owner,json={'title':'Automatic review','answer':'secret place','image_url':result['image_url'],'content_rights_confirmed':True})
+    assert posted.status_code==201
+    assert posted.json()['moderation_status']==('published' if expected=='approved' else 'pending')
+    assert client.get(result['image_url']).status_code==(200 if expected=='approved' else 404)
+
 LEGAL_FIELDS = {'player_birth_date':'2000-01-01','terms_accepted':True,'privacy_accepted':True,'legal_version':VERSION}
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setenv("MODERATION_REQUIRE_REVIEW","0")
+    monkeypatch.setenv("IMAGE_SCANNER","off")
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine)
@@ -40,7 +161,7 @@ def create_case(client, headers, **extra):
     r = client.post('/api/uploads', headers=headers, data={'rights_confirmed':'true'},files={'file': ('secret-location.jpg', stream.getvalue(), 'image/jpeg')})
     assert r.status_code == 201
     url = r.json()['image_url']
-    clean = Image.open(io.BytesIO(client.get(url).content))
+    clean = Image.open(io.BytesIO(client.get(url,headers=headers).content))
     assert not clean.getexif()
     body = dict(title='Góc phố bí ẩn', answer='Chợ Bến Thành', image_url=url, content_rights_confirmed=True,**extra)
     r = client.post('/api/cases', headers=headers, json=body)

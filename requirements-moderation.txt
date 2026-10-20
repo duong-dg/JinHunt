@@ -1,0 +1,2 @@
+# Optional local CPU model. Review licenses and resource requirements before enabling.
+nudenet==3.4.2
