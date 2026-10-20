@@ -65,7 +65,7 @@ def private_user(user, db=None):
     return {**public_user(user), "email": user.email, "phone": user.phone,
             "contact_verified": False, "guardian_managed":bool(user.guardian_managed),
             "needs_legal_consent":bool(db is not None and (not user.player_birth_date or not latest_consent(db,user))),
-            "role":user.role, "legal_version":LEGAL_VERSION}
+            "role":user.role, "player_birth_date":user.player_birth_date.isoformat() if user.player_birth_date else None, "legal_version":LEGAL_VERSION}
 
 def current_user(request: Request, authorization: str = Header(default=""), staff_cookie: str | None = Cookie(default=None,alias=COOKIE_NAME), db: Session = Depends(get_db)):
     raw = authorization.removeprefix("Bearer ") if authorization else staff_cookie or ''

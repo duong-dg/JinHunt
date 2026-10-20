@@ -8,7 +8,8 @@ function clearPreviews(){for(const url of previewURLs)URL.revokeObjectURL(url);p
 $('#moderation-dialog').addEventListener('close',clearPreviews);
 document.addEventListener('click',event=>{
   const button=event.target.closest('[data-report-case]');
-  if(!button||!requireLogin())return;
+  if(!button)return;
+  if(!user){$('#auth-dialog')?.showModal();return;}
   reportedCase=Number(button.dataset.reportCase);$('#report-form').reset();$('#report-dialog').showModal();
 });
 $('#report-form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget;busy(form,async()=>{

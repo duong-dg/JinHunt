@@ -135,10 +135,10 @@ function renderUser() {
   if (!user) { $('#unread-count').hidden = true; $('#notifications-list').innerHTML = ''; inboxNext = null; inboxThroughId = 0; }
   else refreshInbox();
   document.querySelectorAll('#create-form .location-picker').forEach(picker => { if (user?.guardian_managed) picker.querySelector('.clear-location').click(); picker.hidden=Boolean(user?.guardian_managed); });
-  if (user?.needs_legal_consent && typeof openConsentDialog==='function') openConsentDialog();
+
 }
 async function refreshUser() { if (token) { try { user = await api('/me'); } catch {} } renderUser(); }
-function requireLogin() { if (user) { if (user.needs_legal_consent) { if (typeof openConsentDialog==='function') openConsentDialog(); else toast('Cần xác nhận điều khoản và độ tuổi trong tài khoản.','error'); return false; } return true; } $('#auth-dialog').showModal(); return false; }
+function requireLogin(consentRequired = true) { if (user) { if (consentRequired && user.needs_legal_consent) { if (typeof openConsentDialog==='function') openConsentDialog(); else toast('Cần xác nhận điều khoản và độ tuổi trong tài khoản.','error'); return false; } return true; } $('#auth-dialog').showModal(); return false; }
 async function busy(form, task) { if (form.dataset.locating === 'true') { formMessage(form,'Đang lấy vị trí, vui lòng chờ hoặc bấm Hủy.'); return; } const button = form.querySelector('[type="submit"]'); button.disabled = true; formMessage(form,''); try { await task(); } catch (error) { formMessage(form,error.message); toast(error.message,'error'); } finally { button.disabled = false; } }
 const locationRequests = new WeakMap();
 function locationMarkup(forGuess = false) {
@@ -211,7 +211,7 @@ async function refreshInbox(append = false) {
   } catch (error) { if (page === 'notifications') { $('#notifications-list').innerHTML = '<p class="inbox-empty">Chưa tải được thông báo. Bấm Làm mới để thử lại.</p>'; toast(error.message,'error'); } }
   finally { inboxLoading = false; }
 }
-$('#notifications-button').onclick = () => { if (requireLogin()) { showMainPage('notifications'); window.scrollTo(0,0); refreshInbox(); } };
+$('#notifications-button').onclick = () => { if (requireLogin(false)) { showMainPage('notifications'); window.scrollTo(0,0); refreshInbox(); } };
 $('#notifications-more').onclick = () => refreshInbox(true);
 $('#notifications-refresh').onclick = () => refreshInbox();
 $('#notifications-read').onclick = async () => { if (!inboxThroughId) return; $('#notifications-read').disabled = true; try { await api('/notifications/read',{method:'POST',body:{through_id:inboxThroughId}}); await refreshInbox(); } catch(error) { $('#notifications-read').disabled = false; toast(error.message,'error'); } };
