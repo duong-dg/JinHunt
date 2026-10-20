@@ -171,3 +171,24 @@ header.sidebar{background:linear-gradient(180deg,#fff,#f4fbfd);border-right-colo
 #share-link{width:100%;box-sizing:border-box;font-size:16px}
 #share-status{font-size:14px;color:#45616c}
 @media(max-width:520px){.share-button{font-size:13px;padding:8px}.post-actions .solved-count{width:100%;margin:0}}
+
+.timeline-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.timeline-actions button{min-height:44px;margin:0}
+#timeline-logout{color:#a34545;border-color:#e2c7c7;background:#fff8f6}
+#timeline-logout:hover{background:#fbece8}
+@media(max-width:520px){.timeline-actions{width:100%}.timeline-actions button{flex:1;padding:10px 8px;font-size:14px}}
+
+.avatar[data-frame=bronze]{outline:2px solid #ba7948;outline-offset:2px;box-shadow:0 0 0 5px #f5e5d4}
+.avatar[data-frame=silver]{outline:2px solid #9aafbf;outline-offset:2px;box-shadow:0 0 0 5px #e6edf4}
+.avatar[data-frame=gold]{outline:3px solid #dba827;outline-offset:2px;box-shadow:0 0 0 6px #fff2cb}
+.avatar[data-frame=platinum]{outline:3px double #28a997;outline-offset:3px;box-shadow:0 0 0 7px #dbf8f0}
+.avatar[data-frame=diamond]{outline:3px solid #7394ef;outline-offset:3px;box-shadow:0 0 0 6px #e5e8ff,0 0 16px #84d9ee80}
+.daily-journey{margin-top:20px;padding-top:16px;border-top:1px solid #dcebf0}
+.daily-journey[hidden],#profile-daily[hidden]{display:none}
+.daily-journey h3{margin:0 0 8px;font-size:17px}
+.daily-journey p{font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.daily-checkin{width:100%;font-size:14px;min-height:44px}
+.daily-checkin:disabled{opacity:.7}
+#profile-daily{background:#f3fbfc;border:1px solid #dcebf0;border-radius:14px;padding:18px;margin-bottom:24px}
+#profile-daily .daily-journey{margin:0;padding:0;border:0}
+#profile-daily .daily-checkin{width:auto;min-width:200px}

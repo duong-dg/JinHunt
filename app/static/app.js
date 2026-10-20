@@ -60,9 +60,20 @@ async function copyShareLink(){
 }
 $('#copy-share-link').onclick=copyShareLink;
 function showShareLink(url){$('#share-link').value=url;$('#share-status').textContent='';if(!$('#share-dialog').open)$('#share-dialog').showModal();}
+function shareAttribution(id){
+  try{const value=JSON.parse(sessionStorage.getItem('jinhunt-share-'+id)||'null');return value&&value.until>Date.now()?value.token:null;}catch{return null;}
+}
+const incomingShare=new URLSearchParams(location.search),incomingCase=incomingShare.get('case'),incomingToken=incomingShare.get('share');
+if(/^[1-9][0-9]*$/.test(incomingCase||'')&&/^[A-Za-z0-9_-]{32,64}$/.test(incomingToken||'')){
+  try{sessionStorage.setItem('jinhunt-share-'+incomingCase,JSON.stringify({token:incomingToken,until:Date.now()+86400000}));}catch{}
+}
 async function shareCase(button){
   const id=Number(button.dataset.shareCase);if(!Number.isSafeInteger(id)||id<1)return;
   const url=new URL('/',location.origin);url.searchParams.set('case',id);
+  if(user){
+    try{const result=await api(`/cases/${id}/share`,{method:'POST'});if(result.share_token)url.searchParams.set('share',result.share_token);}
+    catch(error){toast('Chưa tạo được link tính điểm chia sẻ. '+error.message,'error');return;}
+  }
   const payload={title:button.dataset.shareTitle||'Thử thách JinHunt',text:'Bạn có biết đây là đâu? Cùng đoán trên JinHunt nhé!',url:url.href};
   if(typeof navigator.share==='function'){
     try{await navigator.share(payload);return;}catch(error){if(error.name==='AbortError')return;}
@@ -71,7 +82,27 @@ async function shareCase(button){
 }
 function bindShares(root){root.querySelectorAll('[data-share-case]').forEach(button=>button.onclick=()=>shareCase(button));}
 function avatarContent(name, url) { const initial = esc(Array.from(name || 'J')[0].toUpperCase()); return /^\/uploads\/[a-zA-Z0-9-]+\.jpg$/.test(url || '') ? `<img src="${esc(url)}" alt="" loading="lazy" data-fallback="${initial}">` : initial; }
-function avatar(name, url, extra = '') { return `<span class="avatar ${extra}">${avatarContent(name, url)}</span>`; }
+function avatarTier(level=1){return level>=50?'diamond':level>=30?'platinum':level>=20?'gold':level>=10?'silver':level>=5?'bronze':'none';}
+function avatar(name,url,level=1){return `<span class="avatar" data-frame="${avatarTier(level)}" title="Level ${Number(level)||1}">${avatarContent(name,url)}</span>`;}
+function dailyMarkup(){return '<section class="daily-journey"><h3>Hành trình hôm nay</h3><p class="daily-day muted">Làm mới mỗi ngày theo giờ Việt Nam</p><button type="button" class="outline daily-checkin" disabled>Đang tải điểm danh…</button><p class="daily-solve muted">Giải đúng 1 bài mới · +10 XP/ngày</p><p class="daily-note muted">Viền: Đồng 5 · Bạc 10 · Vàng 20 · Bạch kim 30 · Kim cương 50</p><p class="daily-status" role="status" aria-live="polite"></p></section>';}
+$('.journey').insertAdjacentHTML('beforeend',dailyMarkup());
+async function loadDailyProgress(){
+  const account=user?.id;
+  if(!account){document.querySelectorAll('.daily-journey').forEach(e=>e.hidden=true);return;}
+  document.querySelectorAll('.daily-journey').forEach(e=>e.hidden=false);
+  try{const data=await api('/me/progress');if(user?.id!==account)return;
+    document.querySelectorAll('.daily-checkin').forEach(b=>{delete b.dataset.retry;b.disabled=data.checkin_done;b.textContent=data.checkin_done?'✓ Đã điểm danh hôm nay':'Điểm danh · +5 XP';});
+    document.querySelectorAll('.daily-solve').forEach(e=>e.textContent=data.solve_done?'✓ Đã nhận +10 XP giải đúng hôm nay':'Giải đúng 1 bài mới · +10 XP/ngày');
+    document.querySelectorAll('.daily-day').forEach(e=>e.textContent=`${data.day} · Làm mới lúc 00:00 giờ Việt Nam`);
+  }catch{document.querySelectorAll('.daily-checkin').forEach(b=>{b.disabled=false;b.textContent='Tải lại điểm danh';b.dataset.retry='true';});}
+}
+document.addEventListener('click',async event=>{
+  const button=event.target.closest('.daily-checkin');if(!button||!requireLogin())return;
+  if(button.dataset.retry){delete button.dataset.retry;loadDailyProgress();return;}
+  document.querySelectorAll('.daily-checkin').forEach(b=>b.disabled=true);
+  try{const result=await api('/me/checkin',{method:'POST'});user=result.user;renderUser();if(page==='profile')loadFeed();toast(result.reward_xp?`Điểm danh thành công! +${result.reward_xp} XP.`:'Bạn đã điểm danh hôm nay rồi.');}
+  catch(error){toast(error.message,'error');loadDailyProgress();}
+});
 document.addEventListener('error', event => { if (event.target.matches?.('.avatar img')) event.target.parentElement.textContent = event.target.dataset.fallback || 'J'; }, true);
 document.querySelectorAll('[data-icon]').forEach(element => element.innerHTML = icon(element.dataset.icon));
 const contacts = document.createElement('div');
@@ -147,11 +178,13 @@ function renderUser() {
   $('#account-label').textContent = user ? 'Hồ sơ của tôi' : 'Đăng nhập';
   $('#journey-name').textContent = name;
   $('#journey-handle').textContent = user ? `@${user.username}` : 'Một góc nhìn mới đang chờ bạn';
-  $('#profile').textContent = user ? `Level ${user.level} · ${user.xp} XP · Còn ${200 - user.xp % 200} XP lên cấp` : 'Đăng nhập để bắt đầu tích lũy XP';
-  $('#xp-fill').style.width = `${user ? user.xp % 200 / 2 : 0}%`;
-  $('.xp-track').setAttribute('aria-valuenow', user ? user.xp % 200 : 0);
+  $('#profile').textContent = user ? `Level ${user.level} · ${user.xp} XP · ${user.rank_name} · Còn ${user.xp_to_next_level} XP lên cấp` : 'Đăng nhập để bắt đầu tích lũy XP';
+  $('#xp-fill').style.width = `${user ? 100*user.xp_in_level/user.xp_for_next_level : 0}%`;
+  $('.xp-track').setAttribute('aria-valuenow',user?user.xp_in_level:0);
+  $('.xp-track').setAttribute('aria-valuemax',user?user.xp_for_next_level:200);
+  loadDailyProgress();
   $('#journey-action').textContent = user ? 'Xem trang cá nhân ↗' : 'Bắt đầu hành trình ↗';
-  document.querySelectorAll('.self-avatar').forEach(element => element.innerHTML = avatarContent(user ? name : 'J', user?.avatar_url));
+  document.querySelectorAll('.self-avatar').forEach(element=>{element.innerHTML=avatarContent(user?name:'J',user?.avatar_url);element.dataset.frame=avatarTier(user?.level);element.title=user?`${user.rank_name} · Level ${user.level}`:'';});
   if ($('#avatar-remove')) $('#avatar-remove').hidden = !user?.avatar_url;
   if (!user) { $('#unread-count').hidden = true; $('#notifications-list').innerHTML = ''; inboxNext = null; inboxThroughId = 0; }
   else refreshInbox();
@@ -232,7 +265,9 @@ async function toggleLike(button) {
   const id = Number(button.dataset.likeCase), liked = button.dataset.liked === 'true';
   document.querySelectorAll(`[data-like-case="${id}"]`).forEach(b => b.disabled = true);
   try {
-    const result = await api(`/cases/${id}/like`,{method:liked ? 'DELETE' : 'PUT'});
+    const attribution=shareAttribution(id);
+    const result = await api(`/cases/${id}/like${!liked&&attribution?'?share_token='+encodeURIComponent(attribution):''}`,{method:liked ? 'DELETE' : 'PUT'});
+    if(!liked)await refreshUser();
     document.querySelectorAll(`[data-like-case="${id}"]`).forEach(b => { b.dataset.liked = String(result.liked_by_me); b.classList.toggle('is-liked',result.liked_by_me); b.setAttribute('aria-pressed',String(result.liked_by_me)); b.setAttribute('aria-label',result.liked_by_me ? 'Bỏ tim bài viết' : 'Thả tim bài viết'); b.querySelector('span').textContent = result.likes; });
   } catch (error) { toast(error.message,'error'); }
   finally { document.querySelectorAll(`[data-like-case="${id}"]`).forEach(b => b.disabled = false); }
@@ -250,7 +285,7 @@ async function refreshInbox(append = false) {
     inboxNext = result.next_before_id;
     const verbs = {like:'đã thả tim bài viết của bạn',comment:'đã bình luận vào bài viết của bạn',solve:'đã giải đúng thử thách của bạn'};
     const actorNames=n=>{const actors=n.actors||[n.actor],names=actors.map(a=>a.display_name||a.username),others=Math.max(0,(n.actor_count||actors.length)-actors.length);return esc(names.join(others?', ':' và '))+(others?` và ${others} người khác`:'');};
-    const markup = result.items.map(n => `<button type="button" class="inbox-item ${n.is_read ? '' : 'unread'}" data-notification="${n.id}" data-notification-case="${n.case_id}">${avatar(n.actor.display_name || n.actor.username,n.actor.avatar_url)}<span><span><strong>${actorNames(n)}</strong> ${verbs[n.kind] || 'đã tương tác với bài viết của bạn'}.</span><b class="inbox-case">${esc(n.case_title)}</b><small>${esc(new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(n.created_at) ? n.created_at : n.created_at+'Z').toLocaleString('vi-VN'))}</small></span><i aria-label="Chưa đọc"></i></button>`).join('');
+    const markup = result.items.map(n => `<button type="button" class="inbox-item ${n.is_read ? '' : 'unread'}" data-notification="${n.id}" data-notification-case="${n.case_id}">${avatar(n.actor.display_name || n.actor.username,n.actor.avatar_url,n.actor.level)}<span><span><strong>${actorNames(n)}</strong> ${verbs[n.kind] || 'đã tương tác với bài viết của bạn'}.</span><b class="inbox-case">${esc(n.case_title)}</b><small>${esc(new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(n.created_at) ? n.created_at : n.created_at+'Z').toLocaleString('vi-VN'))}</small></span><i aria-label="Chưa đọc"></i></button>`).join('');
     if (append) $('#notifications-list').insertAdjacentHTML('beforeend',markup); else $('#notifications-list').innerHTML = markup || '<p class="inbox-empty">Chưa có thông báo. Khi có người thả tim, bình luận hoặc giải đúng bài của bạn, bạn sẽ thấy ở đây.</p>';
     $('#notifications-more').hidden = !inboxNext; $('#notifications-read').disabled = !count;
     document.querySelectorAll('[data-notification]').forEach(b => b.onclick = async () => { b.disabled = true; try { await api(`/notifications/${b.dataset.notification}/read`,{method:'POST'}); await openCase(Number(b.dataset.notificationCase),true); refreshInbox(); } catch(error) { toast(error.message,'error'); } finally { b.disabled = false; } });
@@ -262,12 +297,14 @@ $('#notifications-more').onclick = () => refreshInbox(true);
 $('#notifications-refresh').onclick = () => refreshInbox();
 $('#notifications-read').onclick = async () => { if (!inboxThroughId) return; $('#notifications-read').disabled = true; try { await api('/notifications/read',{method:'POST',body:{through_id:inboxThroughId}}); await refreshInbox(); } catch(error) { $('#notifications-read').disabled = false; toast(error.message,'error'); } };
 setInterval(() => { if (!document.hidden && user && page !== 'notifications') refreshInbox(); },30000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden && user) refreshInbox(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && user) {refreshInbox();loadDailyProgress();} });
+setInterval(()=>{if(!document.hidden&&user)loadDailyProgress();},60000);
 async function loadFeed(append = false) {
   if (page === 'notifications') return;
   if(page==='profile'&&!user) showMainPage('explore');
   showMainPage(page);
   if($('#timeline-profile')) $('#timeline-profile').hidden=page!=='profile';
+  if($('#profile-daily')) $('#profile-daily').hidden=page!=='profile';
   if (!append) feedOffset = 0;
   $('#load-more').hidden = true;
   $('#explore').classList.toggle('active', page === 'explore'); $('#ranking').classList.toggle('active', page === 'ranking');
@@ -277,18 +314,21 @@ async function loadFeed(append = false) {
   $('.composer').hidden = page !== 'explore';
   if (!append) $('#feed').innerHTML = '<div class="empty">Đang tải hành trình…</div>';
   try {
-    if (page === 'ranking') { const rows = await api('/leaderboard'); $('#feed').innerHTML = rows.length ? rows.map((u,i) => `<div class="leader"><span>${String(i+1).padStart(2,'0')}</span>${avatar(u.display_name || u.username,u.avatar_url)}<strong>${esc(u.display_name || u.username)}</strong><span class="score">Level ${u.level} · ${u.xp} XP</span></div>`).join('') : '<div class="empty">Bảng xếp hạng đang chờ nhà khám phá đầu tiên.</div>'; return; }
+    if (page === 'ranking') { const rows = await api('/leaderboard'); $('#feed').innerHTML = rows.length ? rows.map((u,i) => `<div class="leader"><span>${String(i+1).padStart(2,'0')}</span>${avatar(u.display_name || u.username,u.avatar_url,u.level)}<strong>${esc(u.display_name || u.username)}</strong><span class="score">Level ${u.level} · ${u.xp} XP</span></div>`).join('') : '<div class="empty">Bảng xếp hạng đang chờ nhà khám phá đầu tiên.</div>'; return; }
     const own = page === 'profile';
     if(own){
       $('#section-title').textContent='Trang cá nhân';$('#feed-label').textContent='Dòng thời gian · Bài viết của tôi';
       let header=$('#timeline-profile');
       if(!header){header=document.createElement('section');header.id='timeline-profile';$('.feed-toolbar').before(header);}
-      header.innerHTML=`${avatar(user.display_name||user.username,user.avatar_url)}<div><h2>${esc(user.display_name||user.username)}</h2><p>@${esc(user.username)} · Level ${user.level} · ${user.xp} XP</p><p class="timeline-bio">${esc(user.bio||'Mỗi bức ảnh, một dấu chân khám phá.')}</p></div><button type="button" class="outline" id="edit-my-profile">Chỉnh sửa hồ sơ</button>`;
+      header.innerHTML=`${avatar(user.display_name||user.username,user.avatar_url,user.level)}<div><h2>${esc(user.display_name||user.username)}</h2><p>@${esc(user.username)} · Level ${user.level} · ${user.xp} XP</p><p class="timeline-bio">${esc(user.bio||'Mỗi bức ảnh, một dấu chân khám phá.')}</p></div><section class="timeline-actions" aria-label="Thao tác tài khoản"><button type="button" class="outline" id="edit-my-profile">Chỉnh sửa hồ sơ</button><button type="button" class="outline" id="timeline-logout">Đăng xuất</button></section>`;
+      let daily=$('#profile-daily');if(!daily){daily=document.createElement('div');daily.id='profile-daily';header.after(daily);}
+      daily.innerHTML=dailyMarkup();loadDailyProgress();
       $('#edit-my-profile').onclick=openProfileEditor;
+      $('#timeline-logout').onclick=async event=>{const button=event.currentTarget;button.disabled=true;try{await $('#logout').onclick();}finally{button.disabled=false;}};
     }
     if($('#timeline-profile')) $('#timeline-profile').hidden=!own;
     const rows = await api(`${own?'/me/cases':'/cases'}?offset=${feedOffset}&limit=12`);
-    const markup = rows.map(c => `<article class="post"><div class="post-header">${avatar(c.creator_display_name || c.creator,c.creator_avatar_url)}<div><strong>${esc(c.creator_display_name || c.creator)}</strong><span>${esc(new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(c.created_at)?c.created_at:c.created_at+'Z').toLocaleString('vi-VN'))}${c.moderation_status!=='published'?' · '+(c.moderation_status==='pending'?'Chờ kiểm duyệt':'Đã gỡ'):''}</span></div><span class="post-reward">+${c.reward_xp} XP</span></div><div class="photo-frame" ${c.moderation_status!=='published'?'hidden':''}><button class="post-photo" data-case="${c.id}" aria-label="Xem thử thách ${esc(c.title)}"><img ${c.moderation_status==='published'?`src="${esc(c.image_url)}"`:''} alt="Ảnh thử thách ${esc(c.title)}" loading="lazy"></button><button type="button" class="photo-report" data-report-case="${c.id}" aria-label="Báo cáo ảnh vi phạm" title="Báo cáo ảnh vi phạm"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4m0 0c5-4 9 4 14 0v10c-5 4-9-4-14 0"/></svg></span></button></div><div class="post-body"><div class="post-actions" ${c.moderation_status!=='published'?'hidden':''}>${likeMarkup(c)}<button class="guess-button" data-case="${c.id}" data-discussion="true">${icon('chat')}<span>Bình luận / Dự đoán · ${c.comments || 0}</span></button>${shareMarkup(c)}<span class="solved-count">${c.solves} người giải được</span></div><h2>${esc(c.title)}</h2>${c.description ? `<p class="post-description">${esc(c.description)}</p>` : '<p class="post-description muted">Nhìn kỹ bức ảnh, bạn nhận ra nơi này chứ?</p>'}<p class="private-note">${icon('compass')} Đáp án của bạn được giữ riêng tư.</p></div></article>`).join('');
+    const markup = rows.map(c => `<article class="post"><div class="post-header">${avatar(c.creator_display_name || c.creator,c.creator_avatar_url,c.creator_level)}<div><strong>${esc(c.creator_display_name || c.creator)}</strong><span>${esc(new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(c.created_at)?c.created_at:c.created_at+'Z').toLocaleString('vi-VN'))}${c.moderation_status!=='published'?' · '+(c.moderation_status==='pending'?'Chờ kiểm duyệt':'Đã gỡ'):''}</span></div><span class="post-reward">Tối đa 50 XP</span></div><div class="photo-frame" ${c.moderation_status!=='published'?'hidden':''}><button class="post-photo" data-case="${c.id}" aria-label="Xem thử thách ${esc(c.title)}"><img ${c.moderation_status==='published'?`src="${esc(c.image_url)}"`:''} alt="Ảnh thử thách ${esc(c.title)}" loading="lazy"></button><button type="button" class="photo-report" data-report-case="${c.id}" aria-label="Báo cáo ảnh vi phạm" title="Báo cáo ảnh vi phạm"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4m0 0c5-4 9 4 14 0v10c-5 4-9-4-14 0"/></svg></span></button></div><div class="post-body"><div class="post-actions" ${c.moderation_status!=='published'?'hidden':''}>${likeMarkup(c)}<button class="guess-button" data-case="${c.id}" data-discussion="true">${icon('chat')}<span>Bình luận / Dự đoán · ${c.comments || 0}</span></button>${shareMarkup(c)}<span class="solved-count">${c.solves} người giải được</span></div><h2>${esc(c.title)}</h2>${c.description ? `<p class="post-description">${esc(c.description)}</p>` : '<p class="post-description muted">Nhìn kỹ bức ảnh, bạn nhận ra nơi này chứ?</p>'}<p class="private-note">${icon('compass')} Đáp án của bạn được giữ riêng tư.</p></div></article>`).join('');
     if (append) $('#feed').insertAdjacentHTML('beforeend', markup); else $('#feed').innerHTML = markup || (own ? '<div class="empty"><h3>Bạn chưa đăng bài nào</h3><p>Chia sẻ một địa điểm để bắt đầu dòng thời gian của mình.</p><button class="primary" id="empty-create">＋ Tạo thử thách</button></div>' : '<div class="empty"><span class="empty-icon">◈</span><p class="eyebrow">MỖI TẤM ẢNH, MỘT HÀNH TRÌNH</p><h3>Chia sẻ góc nhìn đầu tiên</h3><p>Một con hẻm quen, một quán nhỏ ven đường…<br>Đăng ảnh và để mọi người tìm ra nơi bạn đã đến.</p><button class="primary" id="empty-create">＋ Tạo thử thách đầu tiên</button></div>');
     feedOffset += rows.length;
     $('#load-more').hidden = rows.length < 12;
@@ -297,12 +337,12 @@ async function loadFeed(append = false) {
     if ($('#empty-create')) $('#empty-create').onclick = () => $('#create').click();
   } catch (error) { if (!append) { $('#feed').innerHTML = '<div class="empty">Không tải được dữ liệu. <button id="retry">Thử lại</button></div>'; $('#retry').onclick = () => loadFeed(); } else $('#load-more').hidden = false; toast(error.message,'error'); }
 }
-async function loadHunters() { try { const rows = (await api('/leaderboard')).slice(0, 4); $('#top-hunters').innerHTML = rows.length ? rows.map((u,i) => `<div class="hunter"><span class="hunter-rank">${i+1}</span>${avatar(u.display_name || u.username,u.avatar_url)}<div><strong>${esc(u.display_name || u.username)}</strong><span>Level ${u.level} · ${u.xp} XP</span></div></div>`).join('') : '<p class="muted">Cộng đồng đang chờ nhà khám phá đầu tiên. Có thể là bạn!</p>'; } catch { $('#top-hunters').innerHTML = '<p class="muted">Chưa tải được bảng xếp hạng.</p>'; } }
-async function loadComments(id) { const rows = await api(`/cases/${id}/comments`); $('#comments').innerHTML = rows.length ? rows.map(c => `<div class="comment ${c.is_hidden ? 'hidden-comment' : ''}">${avatar(c.display_name || c.username,c.avatar_url)}<div class="comment-body"><strong>${esc(c.display_name || c.username)}</strong><p>${esc(c.content)}</p>${c.is_hidden ? '<span class="comment-hidden-label">Nội dung được giữ riêng tư</span>' : ''}</div></div>`).join('') : '<p class="muted">Chưa có trao đổi. Hãy bắt đầu với một gợi ý!</p>'; }
+async function loadHunters() { try { const rows = (await api('/leaderboard')).slice(0, 4); $('#top-hunters').innerHTML = rows.length ? rows.map((u,i) => `<div class="hunter"><span class="hunter-rank">${i+1}</span>${avatar(u.display_name || u.username,u.avatar_url,u.level)}<div><strong>${esc(u.display_name || u.username)}</strong><span>Level ${u.level} · ${u.xp} XP</span></div></div>`).join('') : '<p class="muted">Cộng đồng đang chờ nhà khám phá đầu tiên. Có thể là bạn!</p>'; } catch { $('#top-hunters').innerHTML = '<p class="muted">Chưa tải được bảng xếp hạng.</p>'; } }
+async function loadComments(id) { const rows = await api(`/cases/${id}/comments`); $('#comments').innerHTML = rows.length ? rows.map(c => `<div class="comment ${c.is_hidden ? 'hidden-comment' : ''}">${avatar(c.display_name || c.username,c.avatar_url,c.level)}<div class="comment-body"><strong>${esc(c.display_name || c.username)}</strong><p>${esc(c.content)}</p>${c.is_hidden ? '<span class="comment-hidden-label">Nội dung được giữ riêng tư</span>' : ''}</div></div>`).join('') : '<p class="muted">Chưa có trao đổi. Hãy bắt đầu với một gợi ý!</p>'; }
 async function openCase(id, discussion = false) {
   try {
     const c = await api(`/cases/${id}`);
-    $('#detail').innerHTML = `<p class="eyebrow">THỬ THÁCH #${c.id} · +${c.reward_xp} XP</p><h2>${esc(c.title)}</h2><div class="detail-author">${avatar(c.creator_display_name || c.creator,c.creator_avatar_url)}<span>${esc(c.creator_display_name || c.creator)} · ${c.solves} người giải được</span>${likeMarkup(c)}${shareMarkup(c)}<button type="button" class="report-button" data-report-case="${c.id}">Báo cáo</button></div><img class="detail-image" src="${esc(c.image_url)}" alt="Ảnh địa điểm bí ẩn"><p>${esc(c.description)}</p><hr><h3>Bình luận & dự đoán</h3><p class="muted">Cùng một ô để trao đổi hoặc đoán tên địa danh. Nội dung chứa đáp án được ẩn với người chưa giải đúng. Người đã giải đúng và chủ bài xem được các bình luận chứa đáp án; nhận XP một lần.</p><div id="comments"></div><form id="comment-form"><label>Bình luận hoặc đoán địa điểm<textarea name="content" maxlength="1000" placeholder="Ví dụ: Mình nghĩ đây là Chợ Bến Thành…"></textarea></label>${c.has_coordinates ? `<details class="gps-details"><summary>Hoặc dự đoán bằng vị trí máy</summary>${locationMarkup(true)}</details>` : ''}<button class="primary" type="submit">Gửi bình luận / dự đoán ↗</button><p id="comment-result" class="muted" role="status">Trao đổi thường hiển thị công khai. Đoán đúng để mở các bình luận chứa đáp án. Tọa độ GPS luôn được giữ riêng tư.</p></form>`;
+    $('#detail').innerHTML = `<p class="eyebrow">THỬ THÁCH #${c.id} · Tối đa 50 XP</p><h2>${esc(c.title)}</h2><div class="detail-author">${avatar(c.creator_display_name || c.creator,c.creator_avatar_url,c.creator_level)}<span>${esc(c.creator_display_name || c.creator)} · ${c.solves} người giải được</span>${likeMarkup(c)}${shareMarkup(c)}<button type="button" class="report-button" data-report-case="${c.id}">Báo cáo</button></div><img class="detail-image" src="${esc(c.image_url)}" alt="Ảnh địa điểm bí ẩn"><p>${esc(c.description)}</p><hr><h3>Bình luận & dự đoán</h3><p class="muted">Cùng một ô để trao đổi hoặc đoán tên địa danh. Nội dung chứa đáp án được ẩn với người chưa giải đúng. Người đã giải đúng và chủ bài xem được các bình luận chứa đáp án; thưởng lần lượt 50 / 25 / 10 / 5 XP theo thứ tự đoán đúng. Bình luận và thả tim: mỗi loại +1 XP/bài (không tính bài của mình).</p><div id="comments"></div><form id="comment-form"><label>Bình luận hoặc đoán địa điểm<textarea name="content" maxlength="1000" placeholder="Ví dụ: Mình nghĩ đây là Chợ Bến Thành…"></textarea></label>${c.has_coordinates ? `<details class="gps-details"><summary>Hoặc dự đoán bằng vị trí máy</summary>${locationMarkup(true)}</details>` : ''}<button class="primary" type="submit">Gửi bình luận / dự đoán ↗</button><p id="comment-result" class="muted" role="status">Trao đổi thường hiển thị công khai. Đoán đúng để mở các bình luận chứa đáp án. Tọa độ GPS luôn được giữ riêng tư.</p></form>`;
     if (c.has_coordinates) bindLocation($('#comment-form'));
     bindLikes($('#detail'));bindShares($('#detail'));
     if (!$('#detail-dialog').open) $('#detail-dialog').showModal();
@@ -310,9 +350,11 @@ async function openCase(id, discussion = false) {
       const f = new FormData(form), body = {content:String(f.get('content') || '').trim()};
       for (const key of ['latitude','longitude']) if (f.get(key) !== null && f.get(key) !== '') body[key] = Number(f.get(key));
       if (!body.content && body.latitude === undefined) throw new Error('Nhập bình luận, tên địa danh hoặc lấy vị trí để dự đoán.');
+      const attribution=shareAttribution(id);if(attribution)body.share_token=attribution;
       const usedGPS = body.latitude !== undefined, result = await api(`/cases/${id}/comments`,{method:'POST',body});
       form.reset();
-      const message = result.status === 'correct' ? `Đoán đúng! Bạn nhận +${result.reward_xp} XP. Bạn đã mở khóa các bình luận chứa đáp án.` : result.status === 'already_solved' ? 'Bạn đã giải được bài này và xem được các bình luận chứa đáp án.' : result.status === 'author' ? 'Bạn là người đăng bài, không nhận XP. Nội dung đáp án đã được che.' : usedGPS ? 'Vị trí chưa trúng. Dự đoán của bạn vẫn được giữ riêng tư.' : result.is_hidden ? 'Nội dung chứa đáp án đã được che để tránh tiết lộ.' : 'Đã đăng bình luận.';
+      let message = result.status === 'correct' ? `Đoán đúng! Bạn nhận +${result.reward_xp} XP. Bạn đã mở khóa các bình luận chứa đáp án.` : result.status === 'already_solved' ? 'Bạn đã giải được bài này và xem được các bình luận chứa đáp án.' : result.status === 'author' ? 'Bạn là người đăng bài, không nhận XP. Nội dung đáp án đã được che.' : usedGPS ? 'Vị trí chưa trúng. Dự đoán của bạn vẫn được giữ riêng tư.' : result.is_hidden ? 'Nội dung chứa đáp án đã được che để tránh tiết lộ.' : 'Đã đăng bình luận.';
+      if(result.interaction_xp)message+=' +1 XP cho bình luận đầu tiên trong bài.';
       $('#comment-result').textContent = message; toast(message);
       await loadComments(id); await refreshUser(); loadFeed(); loadHunters();
     }); };

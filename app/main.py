@@ -22,7 +22,8 @@ from sqlalchemy import select, func, update, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
-from .models import ModerationAudit, User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation, ImageReview
+from .models import ModerationAudit, User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation, ImageReview, PointAward, CaseShare, DailyReward
+from .progression import progression, local_day
 from .migrations import upgrade
 from .image_safety import scan_image
 from .email_verification import consume_registration_proof, build_router as email_router
@@ -52,7 +53,7 @@ async def staff_response_headers(request:Request,call_next):
         response.headers['X-Content-Type-Options']='nosniff'
     if request.url.path.startswith('/api/cases/') and request.url.path.endswith('/comments'):
         response.headers['Cache-Control']='no-store'
-    if request.url.path.startswith(('/api/email-verification/','/api/me/email-verification/')):
+    if request.url.path.startswith(('/api/email-verification/','/api/me/')):
         response.headers['Cache-Control']='no-store'
     return response
 
@@ -64,7 +65,7 @@ def normalize(value):
 def public_user(user):
     return {"id": user.id, "username": user.username, "display_name": user.display_name or user.username,
             "bio": user.bio or "", "avatar_url": user.avatar_url,
-            "xp": user.total_xp, "level": user.total_xp // 200 + 1}
+            "xp": user.total_xp, **progression(user.total_xp)}
 
 def private_user(user, db=None):
     return {**public_user(user), "email": user.email, "phone": user.phone,
@@ -156,20 +157,71 @@ def limit_attempt(db, user, case_id):
         raise HTTPException(429, "Bạn đã gửi 10 lượt trong một phút. Hãy chờ một chút.")
     db.add(Attempt(user_id=user.id, case_id=case_id, created_at=time.time()))
 
+def daily_reward(db,user_id,kind,points):
+    day=local_day()
+    try:
+        with db.begin_nested():
+            db.add(DailyReward(user_id=user_id,day=day,kind=kind,points=points))
+            db.flush()
+            db.execute(update(User).where(User.id==user_id).values(total_xp=User.total_xp+points))
+        return points
+    except IntegrityError:
+        return 0
+
+
+@app.get("/api/me/progress")
+def daily_progress(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    day=local_day()
+    kinds=set(db.scalars(select(DailyReward.kind).where(DailyReward.user_id==user.id,DailyReward.day==day)))
+    return {"day":day.isoformat(),"timezone":"Asia/Ho_Chi_Minh","checkin_done":"checkin" in kinds,"checkin_points":5,"solve_done":"solve" in kinds,"solve_points":10}
+
+
+@app.post("/api/me/checkin")
+def checkin(user: User = Depends(participant), db: Session = Depends(get_db)):
+    points=daily_reward(db,user.id,"checkin",5)
+    db.commit()
+    db.refresh(user)
+    return {"reward_xp":points,"user":private_user(user,db)}
+
+
+def award_points(db, user_id, case_id, kind, points):
+    try:
+        with db.begin_nested():
+            db.add(PointAward(user_id=user_id,case_id=case_id,kind=kind,points=points))
+            db.flush()
+            db.execute(update(User).where(User.id==user_id).values(total_xp=User.total_xp+points))
+        return points
+    except IntegrityError:
+        return 0
+
+
+def reward_share(db, case, actor, share_token):
+    if not share_token or actor.id==case.creator_id:
+        return
+    share=db.get(CaseShare,share_token)
+    if share and share.case_id==case.id and share.user_id==case.creator_id:
+        award_points(db,case.creator_id,case.id,"share",10)
+
+
 def award_solve(db, case, user):
     if case.creator_id == user.id:
         return "author", 0
+    # Serialize awards per case in both PostgreSQL and SQLite before counting.
+    db.execute(update(Case).where(Case.id==case.id).values(reward_xp=Case.reward_xp))
     if db.scalar(select(Solve).where(Solve.user_id == user.id, Solve.case_id == case.id)):
         return "already_solved", 0
+    rank=db.scalar(select(func.count()).select_from(Solve).where(Solve.case_id==case.id))
+    points=(50,25,10)[rank] if rank<3 else 5
     try:
         with db.begin_nested():
             db.add(Solve(user_id=user.id, case_id=case.id))
             db.flush()
-            db.execute(update(User).where(User.id == user.id).values(total_xp=User.total_xp + case.reward_xp))
+            award_points(db,user.id,case.id,"solve",points)
     except IntegrityError:
         return "already_solved", 0
+    daily_reward(db,user.id,"solve",10)
     notify(db, case, user, "solve")
-    return "correct", case.reward_xp
+    return "correct", points
 
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=254, description="Username, email hoặc số điện thoại")
@@ -413,7 +465,7 @@ def public_case(case, db, viewer=None):
     creator = db.get(User, case.creator_id)
     return {"id": case.id, "title": case.title, "description": case.description,
             "moderation_status":case.moderation_status, "image_url": case.image_url, "creator": creator.username, "creator_id": creator.id,
-            "creator_display_name": creator.display_name or creator.username, "creator_avatar_url": creator.avatar_url,
+            "creator_display_name": creator.display_name or creator.username, "creator_avatar_url": creator.avatar_url, "creator_level":progression(creator.total_xp)["level"],
             "likes": db.scalar(select(func.count()).select_from(Like).where(Like.case_id == case.id)),
             "liked_by_me": bool(viewer and db.scalar(select(Like.id).where(Like.user_id == viewer.id, Like.case_id == case.id))),
             "comments": db.scalar(select(func.count()).select_from(Comment).where(Comment.case_id == case.id)),
@@ -454,6 +506,7 @@ def case_detail(case_id: int, db: Session = Depends(get_db), viewer: User | None
     return public_case(get_case(case_id, db), db, viewer)
 
 class Guess(BaseModel):
+    share_token: str | None = Field(default=None, max_length=64)
     answer: str = Field(default="", max_length=200)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
@@ -478,10 +531,12 @@ def guess(case_id: int, data: Guess, user: User = Depends(participant), db: Sess
         db.commit()
         return {"status": "incorrect", "reward_xp": 0}
     status, xp = award_solve(db, case, user)
+    reward_share(db,case,user,data.share_token)
     db.commit()
     return {"status": status, "reward_xp": xp}
 
 class CommentCreate(BaseModel):
+    share_token: str | None = Field(default=None, max_length=64)
     content: str = Field(default="", max_length=1000)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
@@ -506,7 +561,7 @@ def comments(case_id: int, db: Session = Depends(get_db), viewer: User | None = 
             result.append({"id":c.id,"username":"account-paused","display_name":"Tài khoản đã dừng","avatar_url":None,"content":"Bình luận không còn hiển thị.","is_hidden":True,"created_at":c.created_at})
             continue
         result.append({"id": c.id, "username": author.username,
-             "display_name": author.display_name or author.username, "avatar_url": author.avatar_url,
+             "display_name": author.display_name or author.username, "avatar_url": author.avatar_url, "level":progression(author.total_xp)["level"],
              "content": "Đã ẩn nội dung dự đoán." if c.is_hidden and not can_read_answers else c.content,
              "is_hidden": bool(c.is_hidden and not can_read_answers), "created_at": c.created_at})
     return result
@@ -532,13 +587,15 @@ def comment(case_id: int, data: CommentCreate, user: User = Depends(participant)
     entry = Comment(case_id=case_id, user_id=user.id, content=content, is_hidden=int(hidden))
     db.add(entry)
     db.flush()
+    interaction_xp=award_points(db,user.id,case.id,"comment",1) if user.id!=case.creator_id else 0
+    reward_share(db,case,user,data.share_token)
     if status != "correct":
         notify(db, case, user, "comment", entry.id)
     db.commit()
-    return {"id": entry.id, "is_hidden": hidden, "status": status, "reward_xp": xp}
+    return {"id": entry.id, "is_hidden": hidden, "status": status, "reward_xp": xp, "interaction_xp":interaction_xp}
 
 @app.put("/api/cases/{case_id}/like")
-def like_case(case_id: int, user: User = Depends(participant), db: Session = Depends(get_db)):
+def like_case(case_id: int, share_token: str | None = Query(default=None,max_length=64), user: User = Depends(participant), db: Session = Depends(get_db)):
     case = get_case(case_id, db)
     if not db.scalar(select(Like.id).where(Like.user_id == user.id, Like.case_id == case.id)):
         try:
@@ -548,8 +605,24 @@ def like_case(case_id: int, user: User = Depends(participant), db: Session = Dep
         except IntegrityError:
             pass
         notify(db, case, user, "like")
+    if user.id!=case.creator_id:
+        award_points(db,user.id,case.id,"like",1)
+        reward_share(db,case,user,share_token)
     db.commit()
     return {"liked_by_me": True, "likes": db.scalar(select(func.count()).select_from(Like).where(Like.case_id == case.id))}
+
+@app.post("/api/cases/{case_id}/share")
+def share_case(case_id: int, user: User = Depends(participant), db: Session = Depends(get_db)):
+    case=get_case(case_id,db)
+    if user.id!=case.creator_id:
+        return {"share_token":None}
+    db.execute(update(Case).where(Case.id==case.id).values(reward_xp=Case.reward_xp))
+    share=db.scalar(select(CaseShare).where(CaseShare.case_id==case.id))
+    if not share:
+        share=CaseShare(token=secrets.token_urlsafe(32),case_id=case.id,user_id=user.id)
+        db.add(share)
+    db.commit()
+    return {"share_token":share.token}
 
 @app.delete("/api/cases/{case_id}/like")
 def unlike_case(case_id: int, user: User = Depends(participant), db: Session = Depends(get_db)):

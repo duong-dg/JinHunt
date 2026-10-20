@@ -203,7 +203,7 @@ def test_game_privacy_scoring_and_comments(client):
     assert client.post(path + '/guesses', headers=player, json={'answer': 'Hà Nội'}).json()['status'] == 'incorrect'
     assert client.post(path + '/guesses', headers=player, json={'answer': 'CHO BEN THANH!'}).json()['reward_xp'] == 50
     assert client.post(path + '/guesses', headers=player, json={'answer': 'Chợ Bến Thành'}).json()['reward_xp'] == 0
-    assert client.get('/api/me', headers=player).json()['xp'] == 50
+    assert client.get('/api/me', headers=player).json()['xp'] == 60
     r = client.post(path + '/comments', headers=player, json={'content': 'Đây là Chợ Bến Thành nè!'})
     assert r.json()['is_hidden'] is True
     client.post(path + '/comments', headers=player, json={'content': 'Ảnh đẹp quá!'})
@@ -351,7 +351,7 @@ def test_likes_and_private_notifications(client):
     assert client.get('/api/notifications', headers=owner).json()['unread_count'] == 0
     client.put(path+'/like', headers=owner)
     assert client.get('/api/notifications', headers=owner).json()['unread_count'] == 0
-    assert client.get('/api/me', headers=player).json()['xp'] == 0
+    assert client.get('/api/me', headers=player).json()['xp'] == 1
     client.post(path+'/comments', headers=other, json={'content':'Một góc ảnh đẹp!'})
     client.post('/api/notifications/read', headers=owner, json={'through_id':entry['id']})
     assert client.get('/api/notifications', headers=owner).json()['unread_count'] == 1
@@ -375,13 +375,13 @@ def test_combined_comment_guesses_aliases_and_hidden_answers(client):
     assert correct['status'] == 'correct' and correct['reward_xp'] == 50 and correct['is_hidden'] is True
     again = client.post(path, headers=player, json={'content':'Đây là Chợ Bến Thành'}).json()
     assert again['status'] == 'already_solved' and again['reward_xp'] == 0
-    assert client.get('/api/me', headers=player).json()['xp'] == 50
+    assert client.get('/api/me', headers=player).json()['xp'] == 61
     own = client.post(path, headers=owner, json={'content':'Chợ Bến Thành'}).json()
     assert own['status'] == 'author' and own['reward_xp'] == 0
     comments = client.get(path).json()
     assert all('chợ bến thành' not in row['content'].lower() and 'ben thanh market' not in row['content'].lower() for row in comments)
     assert any(n['kind']=='solve' for n in client.get('/api/notifications', headers=owner).json()['items'])
-    assert client.post(f'/api/cases/{c["id"]}/guesses', headers=other, json={'answer':'Ben Thanh Market'}).json()['reward_xp'] == 50
+    assert client.post(f'/api/cases/{c["id"]}/guesses', headers=other, json={'answer':'Ben Thanh Market'}).json()['reward_xp'] == 25
 
 def test_combined_comment_gps_and_rate_limit(client):
     owner, player, other = account(client, 'owner'), account(client, 'player'), account(client, 'other')
@@ -395,7 +395,7 @@ def test_combined_comment_gps_and_rate_limit(client):
     for i in range(10):
         assert client.post(path, headers=other, json={'content':f'Bình luận {i}'}).status_code == 201
     assert client.post(path, headers=other, json={'content':'Chợ Bến Thành'}).status_code == 429
-    assert client.get('/api/me', headers=other).json()['xp']==0
+    assert client.get('/api/me', headers=other).json()['xp']==1
 
 def test_notification_pagination(client):
     from app.models import Notification
@@ -597,3 +597,105 @@ def test_notifications_group_people_and_snapshot_reads(client):
     assert client.get('/api/notifications',headers=owner).json()['unread_count']==1
     client.post(f'/api/notifications/{like_group["id"]}/read',headers=owner)
     assert client.get('/api/notifications',headers=owner).json()['unread_count']==0
+
+
+def test_ranked_and_interaction_points(client):
+    owner=account(client,'scoreowner');players=[account(client,f'scoreplayer{i}') for i in range(5)]
+    post=create_case(client,owner);path=f'/api/cases/{post["id"]}'
+    for headers,points in zip(players,[50,25,10,5,5]):
+        assert client.post(path+'/guesses',headers=headers,json={'answer':'Chợ Bến Thành'}).json()['reward_xp']==points
+        assert client.post(path+'/guesses',headers=headers,json={'answer':'Chợ Bến Thành'}).json()['reward_xp']==0
+        for _ in range(2):
+            client.post(path+'/comments',headers=headers,json={'content':'Amazing place'})
+            client.put(path+'/like',headers=headers)
+            client.delete(path+'/like',headers=headers)
+        assert client.get('/api/me',headers=headers).json()['xp']==points+12
+    client.post(path+'/comments',headers=owner,json={'content':'Thanks everyone'})
+    client.put(path+'/like',headers=owner)
+    assert client.get('/api/me',headers=owner).json()['xp']==0
+
+
+def test_share_points_need_valid_link_and_other_person_interaction(client):
+    owner=account(client,'shareowner');visitor=account(client,'sharevisitor');another=account(client,'shareanother')
+    post=create_case(client,owner);other=create_case(client,owner);path=f'/api/cases/{post["id"]}'
+    assert client.post(path+'/share').status_code==401
+    token=client.post(path+'/share',headers=owner).json()['share_token']
+    assert client.post(path+'/share',headers=owner).json()['share_token']==token
+    assert client.post(path+'/share',headers=visitor).json()['share_token'] is None
+    client.get(path)
+    client.put(path+'/like?share_token='+token,headers=owner)
+    client.post(f'/api/cases/{other["id"]}/comments',headers=visitor,json={'content':'Beautiful','share_token':token})
+    client.post(path+'/comments',headers=visitor,json={'content':'Beautiful','share_token':'invalid'})
+    assert client.get('/api/me',headers=owner).json()['xp']==0
+    client.put(path+'/like?share_token='+token,headers=visitor)
+    assert client.get('/api/me',headers=owner).json()['xp']==10
+    client.post(path+'/comments',headers=another,json={'content':'Beautiful','share_token':token})
+    client.delete(path+'/like',headers=visitor)
+    client.put(path+'/like?share_token='+token,headers=visitor)
+    assert client.get('/api/me',headers=owner).json()['xp']==10
+
+
+def test_progression_boundaries_and_frames():
+    from app.progression import progression
+    assert progression(0)['level']==1
+    assert progression(199)['xp_to_next_level']==1
+    assert progression(200)['level']==2
+    assert progression(200)['xp_for_next_level']==230
+    assert progression(429)['level']==2
+    assert progression(430)['level']==3
+    assert progression(430)['xp_for_next_level']==265
+    assert progression(695)['xp_for_next_level']==305
+    assert progression(1000)['xp_for_next_level']==351
+    for level,tier in [(1,'none'),(4,'none'),(5,'bronze'),(9,'bronze'),(10,'silver'),(19,'silver'),(20,'gold'),(30,'platinum'),(50,'diamond'),(1000,'diamond')]:
+        threshold,needed=0,200
+        for _ in range(level-1):
+            threshold+=needed
+            needed=(needed*115+99)//100
+        result=progression(threshold)
+        assert result['level']==level and result['avatar_frame']==tier
+        assert result['xp_in_level']==0
+        assert result['xp_to_next_level']==needed
+        if threshold:assert progression(threshold-1)['level']==level-1
+
+
+def test_daily_rewards_once_per_vietnam_day(client,monkeypatch):
+    import importlib
+    from datetime import date
+    main=importlib.import_module('app.main')
+    monkeypatch.setattr(main,'local_day',lambda:date(2026,10,20))
+    owner=account(client,'dailyowner');player=account(client,'dailyplayer')
+    assert client.post('/api/me/checkin').status_code==401
+    assert client.get('/api/me/progress').status_code==401
+    assert client.get('/api/me/progress',headers=player).json()['checkin_done'] is False
+    first=client.post('/api/me/checkin',headers=player).json()
+    assert first['reward_xp']==5 and first['user']['xp']==5
+    assert client.post('/api/me/checkin',headers=player).json()['reward_xp']==0
+    assert client.get('/api/me/progress',headers=player).json()['checkin_done'] is True
+    post=create_case(client,owner);second=create_case(client,owner)
+    path=f'/api/cases/{post["id"]}/guesses'
+    client.post(path,headers=player,json={'answer':'Chợ Bến Thành'})
+    assert client.get('/api/me',headers=player).json()['xp']==65
+    client.post(f'/api/cases/{second["id"]}/guesses',headers=player,json={'answer':'Chợ Bến Thành'})
+    assert client.get('/api/me',headers=player).json()['xp']==115
+    assert client.get('/api/me/progress',headers=player).json()['solve_done'] is True
+    monkeypatch.setattr(main,'local_day',lambda:date(2026,10,21))
+    assert client.get('/api/me/progress',headers=player).json()['solve_done'] is False
+    assert client.post('/api/me/checkin',headers=player).json()['reward_xp']==5
+    client.post(path,headers=player,json={'answer':'Chợ Bến Thành'})
+    assert client.get('/api/me/progress',headers=player).json()['solve_done'] is False
+    assert client.get('/api/me',headers=player).json()['xp']==120
+
+
+def test_avatar_level_metadata_in_posts_and_comments(client):
+    from app.models import User
+    owner=account(client,'frameowner')
+    with next(app.dependency_overrides[get_db]()) as db:
+        person=db.scalar(select(User).where(User.username=='frameowner'))
+        person.total_xp=1000;db.commit()
+    me=client.get('/api/me',headers=owner).json()
+    assert me['level']==5 and me['avatar_frame']=='bronze'
+    post=create_case(client,owner)
+    assert post['creator_level']==5
+    path=f'/api/cases/{post["id"]}/comments'
+    client.post(path,headers=owner,json={'content':'Welcome everyone'})
+    assert client.get(path).json()[0]['level']==5
