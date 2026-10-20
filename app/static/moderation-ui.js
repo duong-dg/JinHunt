@@ -19,7 +19,7 @@ const staffButton=document.createElement('button');staffButton.type='button';sta
 $('.privacy-actions').append(staffButton);
 window.renderStaffNav=()=>{staffButton.hidden=!user||!['moderator','admin'].includes(user.role);};
 window.renderStaffNav();
-staffButton.onclick=()=>{$('#profile-dialog').close();$('#moderation-dialog').showModal();moderationOffset=0;loadModeration();};
+staffButton.onclick=()=>{location.assign('/staff');};
 $('#moderation-refresh').onclick=()=>{moderationOffset=0;loadModeration();};
 $('#moderation-next').onclick=()=>{moderationOffset+=30;loadModeration();};
 async function loadModeration(){
@@ -37,7 +37,7 @@ async function loadModeration(){
       canvas.onpointerup=e=>{if(!start)return;const end=point(e);selected=[Math.min(start[0],end[0]),Math.min(start[1],end[1]),Math.abs(end[0]-start[0]),Math.abs(end[1]-start[1])];start=null;context.drawImage(bitmap,0,0);context.strokeStyle='#d12c55';context.lineWidth=4;context.strokeRect(selected[0]*canvas.width,selected[1]*canvas.height,selected[2]*canvas.width,selected[3]*canvas.height);};
       card.querySelector('.preview-image').onclick=async event=>{
         const button=event.currentTarget;button.disabled=true;
-        try{const response=await fetch(image.image_url,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok)throw Error('Không tải được ảnh riêng.');const url=URL.createObjectURL(await response.blob());previewURLs.add(url);bitmap=new Image();bitmap.onload=()=>{canvas.width=bitmap.width;canvas.height=bitmap.height;context.drawImage(bitmap,0,0);canvas.hidden=false;};bitmap.src=url;}catch(error){toast(error.message,'error');}finally{button.disabled=false;}
+        try{const response=await fetch(image.image_url,{headers:token?{Authorization:`Bearer ${token}`}:{'X-JinHunt-Staff':'1'},credentials:'same-origin'});if(!response.ok)throw Error('Không tải được ảnh riêng.');const url=URL.createObjectURL(await response.blob());previewURLs.add(url);bitmap=new Image();bitmap.onload=()=>{canvas.width=bitmap.width;canvas.height=bitmap.height;context.drawImage(bitmap,0,0);canvas.hidden=false;};bitmap.src=url;}catch(error){toast(error.message,'error');}finally{button.disabled=false;}
       };
       const action=async(button,kind)=>{button.disabled=true;try{const reason=card.querySelector('.review-reason').value.trim();if(reason.length<5)throw Error('Nhập lý do ít nhất 5 ký tự.');if(kind==='redact'){if(!selected||!selected[2]||!selected[3])throw Error('Hãy mở ảnh và kéo chọn vùng che.');await api('/moderation/images/redact',{method:'POST',body:{image_url:image.image_url,boxes:[selected],reason}});}else await api('/moderation/images/decision',{method:'POST',body:{image_url:image.image_url,action:kind,reason}});await loadModeration();toast('Đã lưu thao tác kiểm duyệt.');}catch(error){toast(error.message,'error');}finally{button.disabled=false;}};
       card.querySelector('.redact-image').onclick=e=>action(e.currentTarget,'redact');card.querySelector('.approve-image').onclick=e=>action(e.currentTarget,'approve');card.querySelector('.remove-image').onclick=e=>action(e.currentTarget,'remove');

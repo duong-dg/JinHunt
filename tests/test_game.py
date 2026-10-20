@@ -12,10 +12,14 @@ from app.main import app
 from app.legal import VERSION
 
 def staff_account(client,username,role='moderator'):
-    from app.models import User
+    from app.models import User, Token
+    import hashlib
     headers=account(client,username)
     with next(app.dependency_overrides[get_db]()) as db:
-        user=db.scalar(select(User).where(User.username==username));user.role=role;db.commit()
+        user=db.scalar(select(User).where(User.username==username));user.role=role
+        raw=headers['Authorization'].removeprefix('Bearer ')
+        db.get(Token,hashlib.sha256(raw.encode()).hexdigest()).staff_verified=1
+        db.commit()
     return headers
 
 def test_moderation_private_queue_redaction_reports_and_suspension(client,monkeypatch):

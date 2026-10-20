@@ -15,6 +15,7 @@ def upgrade(engine):
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_phone ON users (phone)"))
         additions = {"player_birth_date": "DATE", "account_status": "VARCHAR(30) NOT NULL DEFAULT 'active'", "guardian_managed": "INTEGER NOT NULL DEFAULT 0"}
         additions.update(role="VARCHAR(20) NOT NULL DEFAULT 'user'", suspended="INTEGER NOT NULL DEFAULT 0")
+        additions.update(staff_totp_secret="TEXT",staff_totp_counter="INTEGER NOT NULL DEFAULT -1")
         for name, definition in additions.items():
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
@@ -24,3 +25,6 @@ def upgrade(engine):
         case_columns = {column["name"] for column in inspect(connection).get_columns("cases")}
         if "moderation_status" not in case_columns:
             connection.execute(text("ALTER TABLE cases ADD COLUMN moderation_status VARCHAR(20) NOT NULL DEFAULT 'published'"))
+        token_columns={column["name"] for column in inspect(connection).get_columns("tokens")}
+        if "staff_verified" not in token_columns:
+            connection.execute(text("ALTER TABLE tokens ADD COLUMN staff_verified INTEGER NOT NULL DEFAULT 0"))

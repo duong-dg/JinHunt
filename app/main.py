@@ -12,8 +12,8 @@ import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, Query, Form
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, Query, Form, Request, Cookie
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -22,9 +22,10 @@ from sqlalchemy import select, func, update, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
-from .models import User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation, ImageReview
+from .models import ModerationAudit, User, Token, Case, Solve, Comment, Attempt, Like, Notification, AnswerAlias, ContentAttestation, ImageReview
 from .migrations import upgrade
 from .image_safety import scan_image
+from .auth_security import COOKIE_NAME, login_limits, throttle, check_password, consume_totp
 from .moderation import build_router as moderation_router
 from .legal import ConsentInput, VERSION as LEGAL_VERSION, age, latest_consent, record_consent, start_guardian, build_router
 
@@ -39,6 +40,16 @@ async def lifespan(app):
 
 app = FastAPI(title="JinHunt API", version="0.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+@app.middleware('http')
+async def staff_response_headers(request:Request,call_next):
+    response=await call_next(request)
+    if request.url.path.startswith(('/staff','/api/staff/','/api/moderation/','/static/staff')):
+        response.headers['Cache-Control']='no-store'
+        response.headers['Referrer-Policy']='no-referrer'
+        response.headers['X-Frame-Options']='DENY'
+        response.headers['X-Content-Type-Options']='nosniff'
+    return response
 
 def normalize(value):
     value = unicodedata.normalize("NFD", value.lower().replace("đ", "d"))
@@ -56,12 +67,16 @@ def private_user(user, db=None):
             "needs_legal_consent":bool(db is not None and (not user.player_birth_date or not latest_consent(db,user))),
             "role":user.role, "legal_version":LEGAL_VERSION}
 
-def current_user(authorization: str = Header(default=""), db: Session = Depends(get_db)):
-    raw = authorization.removeprefix("Bearer ")
+def current_user(request: Request, authorization: str = Header(default=""), staff_cookie: str | None = Cookie(default=None,alias=COOKIE_NAME), db: Session = Depends(get_db)):
+    raw = authorization.removeprefix("Bearer ") if authorization else staff_cookie or ''
+    if not authorization and staff_cookie and request.method not in {'GET','HEAD','OPTIONS'} and request.headers.get('X-JinHunt-Staff')!='1':
+        raise HTTPException(403,'Yêu cầu quản trị không hợp lệ.')
     token = db.get(Token, hashlib.sha256(raw.encode()).hexdigest())
-    if not authorization.startswith("Bearer ") or not token or token.expires_at < time.time():
+    if (authorization and not authorization.startswith("Bearer ")) or not token or token.expires_at < time.time():
         raise HTTPException(401, "Vui lòng đăng nhập lại.")
     user = db.get(User, token.user_id)
+    if user.role in {"admin","moderator"} and not token.staff_verified:
+        raise HTTPException(401,"Tài khoản quản trị cần đăng nhập qua /staff/login với mã OTP.")
     if user.account_status != "active" or user.suspended:
         raise HTTPException(403,"Tài khoản chưa được kích hoạt hoặc đã dừng. Hãy kiểm tra xác nhận người đại diện hoặc liên hệ hỗ trợ.")
     return user
@@ -71,8 +86,13 @@ def participant(user: User = Depends(current_user), db: Session = Depends(get_db
         raise HTTPException(403,"Cần xác nhận độ tuổi, Điều khoản sử dụng và Chính sách quyền riêng tư trong tài khoản trước khi tham gia.")
     return user
 
-def optional_user(authorization: str = Header(default=""), db: Session = Depends(get_db)):
-    return current_user(authorization, db) if authorization else None
+def optional_user(request: Request, authorization: str = Header(default=""), staff_cookie: str | None = Cookie(default=None,alias=COOKIE_NAME), db: Session = Depends(get_db)):
+    if authorization: return current_user(request,authorization,None,db)
+    if staff_cookie:
+        try: return current_user(request,'',staff_cookie,db)
+        except HTTPException as error:
+            if error.status_code not in {401,403}: raise
+    return None
 
 @app.get('/uploads/{filename}',include_in_schema=False)
 def uploaded_image(filename:str,db:Session=Depends(get_db),viewer:User|None=Depends(optional_user)):
@@ -239,8 +259,9 @@ def register(data: Registration, db: Session = Depends(get_db)):
     return session_response(user, db)
 
 @app.post("/api/auth/login")
-def login(data: Credentials, db: Session = Depends(get_db)):
+def login(data: Credentials, request: Request, db: Session = Depends(get_db)):
     identifier = data.username.strip().lower()
+    login_limits(db,request,identifier)
     if "@" in identifier:
         user = db.scalar(select(User).where(User.email == identifier))
     elif identifier.startswith(("+", "0")) and re.fullmatch(r"[+0-9\s().-]+", identifier):
@@ -253,10 +274,13 @@ def login(data: Credentials, db: Session = Depends(get_db)):
                 user = None
     else:
         user = db.scalar(select(User).where(User.username == identifier))
-    if not user or not hmac.compare_digest(user.password_hash, password_hash(data.password, user.password_hash.split(":")[0])):
+    if user: throttle(db,"account",str(user.id),8)
+    if not check_password(user,data.password,password_hash):
         raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu chưa đúng.")
     if user.account_status != "active" or user.suspended:
         raise HTTPException(403,"Tài khoản đang chờ người đại diện xác nhận hoặc đã dừng. Hãy kiểm tra email người đại diện/liên hệ hỗ trợ.")
+    if user.role in {"admin","moderator"}:
+        raise HTTPException(403,"Tài khoản quản trị dùng trang /staff/login và mã xác thực OTP.")
     return session_response(user, db)
 
 @app.post("/api/auth/logout", status_code=204)
@@ -548,3 +572,58 @@ def leaderboard(db: Session = Depends(get_db)):
 app.include_router(build_router(current_user,password_hash))
 
 app.include_router(moderation_router(current_user,get_case,UPLOAD_DIR))
+
+@app.get('/staff/login',include_in_schema=False)
+def staff_login_page():
+    return FileResponse(STATIC_DIR/'staff-login.html',headers=staff_page_headers())
+
+@app.get('/staff',include_in_schema=False)
+def staff_page():
+    return FileResponse(STATIC_DIR/'staff.html',headers=staff_page_headers())
+
+def staff_page_headers():
+    return {'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY',
+            'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"}
+
+class StaffCredentials(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    username: str = Field(min_length=1,max_length=254)
+    password: str = Field(min_length=1,max_length=128)
+    otp: str = Field(pattern=r'^[0-9]{6}$')
+
+@app.post('/api/staff/login')
+def staff_login(data:StaffCredentials,request:Request,db:Session=Depends(get_db)):
+    if request.headers.get('X-JinHunt-Staff')!='1':
+        raise HTTPException(403,'Yêu cầu đăng nhập quản trị không hợp lệ.')
+    secure=os.getenv('STAFF_COOKIE_SECURE','1')!='0'
+    if secure and request.url.scheme!='https':
+        raise HTTPException(426,'Đăng nhập quản trị cần HTTPS.')
+    identifier=data.username.strip().lower()
+    login_limits(db,request,identifier)
+    user=db.scalar(select(User).where(User.username==identifier))
+    if user: throttle(db,'account',str(user.id),8)
+    valid_password=check_password(user,data.password,password_hash)
+    if not valid_password or user.role not in {'admin','moderator'} or user.guardian_managed or user.suspended or user.account_status!='active':
+        raise HTTPException(401,'Thông tin đăng nhập hoặc mã xác thực chưa đúng.')
+    if not consume_totp(db,user,data.otp):
+        raise HTTPException(401,'Thông tin đăng nhập hoặc mã xác thực chưa đúng.')
+    raw=secrets.token_urlsafe(32)
+    db.add(Token(token_hash=hashlib.sha256(raw.encode()).hexdigest(),user_id=user.id,expires_at=time.time()+8*3600,staff_verified=1))
+    db.add(ModerationAudit(actor_id=user.id,action='staff_login',target=f'user:{user.id}',reason='Password and TOTP verified',created_at=time.time()))
+    db.commit()
+    response=JSONResponse({'status':'ok'},headers={'Cache-Control':'no-store'})
+    response.set_cookie(COOKIE_NAME,raw,max_age=8*3600,httponly=True,secure=secure,samesite='strict',path='/')
+    return response
+
+@app.get('/api/staff/session')
+def staff_session(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    if user.role not in {'admin','moderator'}: raise HTTPException(403,'Cần quyền kiểm duyệt viên.')
+    return private_user(user,db)
+
+@app.post('/api/staff/logout')
+def staff_logout(user:User=Depends(current_user),staff_cookie:str|None=Cookie(default=None,alias=COOKIE_NAME),db:Session=Depends(get_db)):
+    if staff_cookie: db.execute(delete(Token).where(Token.token_hash==hashlib.sha256(staff_cookie.encode()).hexdigest()))
+    db.commit()
+    response=JSONResponse({'status':'ok'},headers={'Cache-Control':'no-store'})
+    response.delete_cookie(COOKIE_NAME,path='/',secure=os.getenv('STAFF_COOKIE_SECURE','1')!='0',httponly=True,samesite='strict')
+    return response

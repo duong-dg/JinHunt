@@ -26,7 +26,7 @@ sudo docker compose exec api python -m app.manage_staff TEN_KIEM_DUYET moderator
 
 Lệnh chỉ đổi quyền tài khoản đã tồn tại, không tạo mật khẩu mặc định. Tài khoản phải hoạt động, đủ 18 tuổi, không thuộc luồng phụ huynh. Đăng nhập lại sau khi đổi quyền. Muốn bỏ quyền, chạy cùng lệnh với `user`.
 
-Trong **Hồ sơ → Kiểm duyệt nội dung**, có hàng chờ ảnh, bài và báo cáo. Moderator được duyệt/gỡ ảnh, duyệt/gỡ bài và khóa tài khoản thường. Chỉ admin được mở khóa. Không khóa bản thân hoặc tài khoản có quyền duyệt qua API này; xử lý quyền staff bằng CLI trên server.
+Đăng nhập qua **`/staff/login`** bằng mật khẩu và mã OTP để mở bảng kiểm duyệt **`/staff`**, gồm hàng chờ ảnh, bài và báo cáo. Sau khi cấp quyền phải thiết lập OTP bằng CLI; xem [thiết lập bảo mật staff](staff-security.md). Moderator được duyệt/gỡ ảnh, duyệt/gỡ bài và khóa tài khoản thường. Chỉ admin được mở khóa. Không khóa bản thân hoặc tài khoản có quyền duyệt qua API này; xử lý quyền staff bằng CLI trên server.
 
 ## Luồng xử lý
 

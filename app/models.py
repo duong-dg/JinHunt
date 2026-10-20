@@ -18,6 +18,8 @@ class User(Base):
     guardian_managed = Column(Integer, default=0, nullable=False)
     role = Column(String(20), default="user", nullable=False)
     suspended = Column(Integer, default=0, nullable=False)
+    staff_totp_secret = Column(Text, nullable=True)
+    staff_totp_counter = Column(Integer, default=-1, nullable=False)
 
 class LegalConsent(Base):
     __tablename__ = "legal_consents"
@@ -76,6 +78,13 @@ class Token(Base):
     token_hash = Column(String(64), primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     expires_at = Column(Float, nullable=False)
+    staff_verified = Column(Integer, default=0, nullable=False)
+
+class LoginBucket(Base):
+    __tablename__ = "login_buckets"
+    key = Column(String(64), primary_key=True)
+    attempts = Column(Integer, nullable=False)
+    expires_at = Column(Float, nullable=False, index=True)
 
 class ImageReview(Base):
     __tablename__ = "image_reviews"

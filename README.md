@@ -107,4 +107,6 @@ Cấu trúc danh tính ngoài có khóa duy nhất `(provider, subject)` và `(u
 
 ## Kiểm duyệt ảnh và báo cáo
 
+Staff dùng cổng riêng `/staff/login` với mật khẩu + OTP, cookie HttpOnly 8 giờ và chống dò mật khẩu dùng database. Cần cấu hình `STAFF_TOTP_KEY` và thiết lập ứng dụng Authenticator trên terminal server; xem [hướng dẫn bảo mật staff](docs/staff-security.md). Phiên quản trị cũ và đăng nhập thường không thay thế bước OTP.
+
 Ảnh quét thành công, không có cảnh báo nhạy cảm được tự duyệt; các khuôn mặt phát hiện được đã che. Ảnh có cảnh báo, chưa quét hoặc quét lỗi chờ người duyệt. Có thể tắt tự duyệt để kiểm tra thủ công tất cả. Docker cài model quét cục bộ NudeNet; cần tạo tài khoản có quyền kiểm duyệt qua CLI. Xem [cấu hình, cấp quyền, che ảnh và giới hạn](docs/moderation.md). Bộ quét không tự phát hiện biển số; người duyệt có công cụ chọn vùng che. Bài cũ không tự chuyển vào hàng chờ.
