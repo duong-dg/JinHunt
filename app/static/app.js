@@ -84,7 +84,7 @@ function bindShares(root){root.querySelectorAll('[data-share-case]').forEach(but
 function avatarContent(name, url) { const initial = esc(Array.from(name || 'J')[0].toUpperCase()); return /^\/uploads\/[a-zA-Z0-9-]+\.jpg$/.test(url || '') ? `<img src="${esc(url)}" alt="" loading="lazy" data-fallback="${initial}">` : initial; }
 function avatarTier(level=1){return level>=50?'diamond':level>=30?'platinum':level>=20?'gold':level>=10?'silver':level>=5?'bronze':'none';}
 function avatar(name,url,level=1){return `<span class="avatar" data-frame="${avatarTier(level)}" title="Level ${Number(level)||1}">${avatarContent(name,url)}</span>`;}
-function dailyMarkup(){return '<section class="daily-journey"><h3>Hành trình hôm nay</h3><p class="daily-day muted">Làm mới mỗi ngày theo giờ Việt Nam</p><button type="button" class="outline daily-checkin" disabled>Đang tải điểm danh…</button><p class="daily-solve muted">Giải đúng 1 bài mới · +10 XP/ngày</p><p class="daily-note muted">Viền: Đồng 5 · Bạc 10 · Vàng 20 · Bạch kim 30 · Kim cương 50</p><p class="daily-status" role="status" aria-live="polite"></p></section>';}
+function dailyMarkup(){return '<section class="daily-journey"><h3>Điểm danh</h3><button type="button" class="outline daily-checkin" disabled>Đang tải…</button></section>';}
 $('.journey').insertAdjacentHTML('beforeend',dailyMarkup());
 async function loadDailyProgress(){
   const account=user?.id;
@@ -92,8 +92,6 @@ async function loadDailyProgress(){
   document.querySelectorAll('.daily-journey').forEach(e=>e.hidden=false);
   try{const data=await api('/me/progress');if(user?.id!==account)return;
     document.querySelectorAll('.daily-checkin').forEach(b=>{delete b.dataset.retry;b.disabled=data.checkin_done;b.textContent=data.checkin_done?'✓ Đã điểm danh hôm nay':'Điểm danh · +5 XP';});
-    document.querySelectorAll('.daily-solve').forEach(e=>e.textContent=data.solve_done?'✓ Đã nhận +10 XP giải đúng hôm nay':'Giải đúng 1 bài mới · +10 XP/ngày');
-    document.querySelectorAll('.daily-day').forEach(e=>e.textContent=`${data.day} · Làm mới lúc 00:00 giờ Việt Nam`);
   }catch{document.querySelectorAll('.daily-checkin').forEach(b=>{b.disabled=false;b.textContent='Tải lại điểm danh';b.dataset.retry='true';});}
 }
 document.addEventListener('click',async event=>{
@@ -170,7 +168,32 @@ async function api(path, options = {}) {
   }
   return data;
 }
+const observedLevels=new Map();
+let celebrationTimer;
+document.body.insertAdjacentHTML('beforeend','<section id="level-celebration" popover="manual" role="status" aria-live="polite" aria-atomic="true" hidden><span class="level-medal" aria-hidden="true">✦</span><div><strong>Chúc mừng lên cấp!</strong><p id="level-celebration-message"></p></div><button type="button" id="level-celebration-close" aria-label="Đóng thông báo lên cấp">×</button></section>');
+function dismissLevelCelebration(){
+  const box=$('#level-celebration');clearTimeout(celebrationTimer);
+  if(typeof box.hidePopover==='function'&&box.matches(':popover-open'))box.hidePopover();box.hidden=true;
+}
+$('#level-celebration-close').onclick=dismissLevelCelebration;
+function celebrateLevel(){
+  if(!user){dismissLevelCelebration();return;}
+  const level=Number(user.level),key='jinhunt-seen-level-'+user.id;
+  if(!Number.isSafeInteger(level)||level<1)return;
+  let previous=observedLevels.get(user.id);
+  if(previous===undefined){try{const saved=Number(localStorage.getItem(key));if(Number.isSafeInteger(saved)&&saved>0)previous=saved;}catch{}}
+  observedLevels.set(user.id,level);try{localStorage.setItem(key,String(level));}catch{}
+  if(previous===undefined||level<=previous)return;
+  const box=$('#level-celebration');
+  dismissLevelCelebration();
+  const host=document.activeElement?.closest('dialog[open]')||document.body;host.append(box);
+  $('#level-celebration-message').textContent=`Bạn đã đạt Level ${level}. Tiếp tục khám phá nhé!`;
+  box.hidden=false;
+  if(typeof box.showPopover==='function')box.showPopover();
+  celebrationTimer=setTimeout(dismissLevelCelebration,12000);
+}
 function renderUser() {
+  celebrateLevel();
   if($('#review-consent')) $('#review-consent').textContent=user?.needs_legal_consent ? 'Xác nhận điều khoản tài khoản' : 'Điều khoản đã đồng ý ↗';
   window.renderEmailVerification?.();
   window.renderStaffNav?.();
@@ -328,7 +351,7 @@ async function loadFeed(append = false) {
     }
     if($('#timeline-profile')) $('#timeline-profile').hidden=!own;
     const rows = await api(`${own?'/me/cases':'/cases'}?offset=${feedOffset}&limit=12`);
-    const markup = rows.map(c => `<article class="post"><div class="post-header">${avatar(c.creator_display_name || c.creator,c.creator_avatar_url,c.creator_level)}<div><strong>${esc(c.creator_display_name || c.creator)}</strong><span>${esc(new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(c.created_at)?c.created_at:c.created_at+'Z').toLocaleString('vi-VN'))}${c.moderation_status!=='published'?' · '+(c.moderation_status==='pending'?'Chờ kiểm duyệt':'Đã gỡ'):''}</span></div><span class="post-reward">Tối đa 50 XP</span></div><div class="photo-frame" ${c.moderation_status!=='published'?'hidden':''}><button class="post-photo" data-case="${c.id}" aria-label="Xem thử thách ${esc(c.title)}"><img ${c.moderation_status==='published'?`src="${esc(c.image_url)}"`:''} alt="Ảnh thử thách ${esc(c.title)}" loading="lazy"></button><button type="button" class="photo-report" data-report-case="${c.id}" aria-label="Báo cáo ảnh vi phạm" title="Báo cáo ảnh vi phạm"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4m0 0c5-4 9 4 14 0v10c-5 4-9-4-14 0"/></svg></span></button></div><div class="post-body"><div class="post-actions" ${c.moderation_status!=='published'?'hidden':''}>${likeMarkup(c)}<button class="guess-button" data-case="${c.id}" data-discussion="true">${icon('chat')}<span>Bình luận / Dự đoán · ${c.comments || 0}</span></button>${shareMarkup(c)}<span class="solved-count">${c.solves} người giải được</span></div><h2>${esc(c.title)}</h2>${c.description ? `<p class="post-description">${esc(c.description)}</p>` : '<p class="post-description muted">Nhìn kỹ bức ảnh, bạn nhận ra nơi này chứ?</p>'}<p class="private-note">${icon('compass')} Đáp án của bạn được giữ riêng tư.</p></div></article>`).join('');
+    const markup = rows.map(c => `<article class="post"><div class="post-header">${avatar(c.creator_display_name || c.creator,c.creator_avatar_url,c.creator_level)}<div><strong>${esc(c.creator_display_name || c.creator)}</strong><span>${esc(new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(c.created_at)?c.created_at:c.created_at+'Z').toLocaleString('vi-VN'))}${c.moderation_status!=='published'?' · '+(c.moderation_status==='pending'?'Chờ kiểm duyệt':'Đã gỡ'):''}</span></div></div><div class="photo-frame" ${c.moderation_status!=='published'?'hidden':''}><button class="post-photo" data-case="${c.id}" aria-label="Xem thử thách ${esc(c.title)}"><img ${c.moderation_status==='published'?`src="${esc(c.image_url)}"`:''} alt="Ảnh thử thách ${esc(c.title)}" loading="lazy"></button><button type="button" class="photo-report" data-report-case="${c.id}" aria-label="Báo cáo ảnh vi phạm" title="Báo cáo ảnh vi phạm"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4m0 0c5-4 9 4 14 0v10c-5 4-9-4-14 0"/></svg></span></button></div><div class="post-body"><div class="post-actions" ${c.moderation_status!=='published'?'hidden':''}>${likeMarkup(c)}<button class="guess-button" data-case="${c.id}" data-discussion="true">${icon('chat')}<span>Bình luận / Dự đoán · ${c.comments || 0}</span></button>${shareMarkup(c)}<span class="solved-count">${c.solves} người giải được</span></div><h2>${esc(c.title)}</h2>${c.description ? `<p class="post-description">${esc(c.description)}</p>` : '<p class="post-description muted">Nhìn kỹ bức ảnh, bạn nhận ra nơi này chứ?</p>'}<p class="private-note">${icon('compass')} Đáp án của bạn được giữ riêng tư.</p></div></article>`).join('');
     if (append) $('#feed').insertAdjacentHTML('beforeend', markup); else $('#feed').innerHTML = markup || (own ? '<div class="empty"><h3>Bạn chưa đăng bài nào</h3><p>Chia sẻ một địa điểm để bắt đầu dòng thời gian của mình.</p><button class="primary" id="empty-create">＋ Tạo thử thách</button></div>' : '<div class="empty"><span class="empty-icon">◈</span><p class="eyebrow">MỖI TẤM ẢNH, MỘT HÀNH TRÌNH</p><h3>Chia sẻ góc nhìn đầu tiên</h3><p>Một con hẻm quen, một quán nhỏ ven đường…<br>Đăng ảnh và để mọi người tìm ra nơi bạn đã đến.</p><button class="primary" id="empty-create">＋ Tạo thử thách đầu tiên</button></div>');
     feedOffset += rows.length;
     $('#load-more').hidden = rows.length < 12;
@@ -342,7 +365,7 @@ async function loadComments(id) { const rows = await api(`/cases/${id}/comments`
 async function openCase(id, discussion = false) {
   try {
     const c = await api(`/cases/${id}`);
-    $('#detail').innerHTML = `<p class="eyebrow">THỬ THÁCH #${c.id} · Tối đa 50 XP</p><h2>${esc(c.title)}</h2><div class="detail-author">${avatar(c.creator_display_name || c.creator,c.creator_avatar_url,c.creator_level)}<span>${esc(c.creator_display_name || c.creator)} · ${c.solves} người giải được</span>${likeMarkup(c)}${shareMarkup(c)}<button type="button" class="report-button" data-report-case="${c.id}">Báo cáo</button></div><img class="detail-image" src="${esc(c.image_url)}" alt="Ảnh địa điểm bí ẩn"><p>${esc(c.description)}</p><hr><h3>Bình luận & dự đoán</h3><p class="muted">Cùng một ô để trao đổi hoặc đoán tên địa danh. Nội dung chứa đáp án được ẩn với người chưa giải đúng. Người đã giải đúng và chủ bài xem được các bình luận chứa đáp án; thưởng lần lượt 50 / 25 / 10 / 5 XP theo thứ tự đoán đúng. Bình luận và thả tim: mỗi loại +1 XP/bài (không tính bài của mình).</p><div id="comments"></div><form id="comment-form"><label>Bình luận hoặc đoán địa điểm<textarea name="content" maxlength="1000" placeholder="Ví dụ: Mình nghĩ đây là Chợ Bến Thành…"></textarea></label>${c.has_coordinates ? `<details class="gps-details"><summary>Hoặc dự đoán bằng vị trí máy</summary>${locationMarkup(true)}</details>` : ''}<button class="primary" type="submit">Gửi bình luận / dự đoán ↗</button><p id="comment-result" class="muted" role="status">Trao đổi thường hiển thị công khai. Đoán đúng để mở các bình luận chứa đáp án. Tọa độ GPS luôn được giữ riêng tư.</p></form>`;
+    $('#detail').innerHTML = `<p class="eyebrow">THỬ THÁCH #${c.id}</p><h2>${esc(c.title)}</h2><div class="detail-author">${avatar(c.creator_display_name || c.creator,c.creator_avatar_url,c.creator_level)}<span>${esc(c.creator_display_name || c.creator)} · ${c.solves} người giải được</span>${likeMarkup(c)}${shareMarkup(c)}<button type="button" class="report-button" data-report-case="${c.id}">Báo cáo</button></div><img class="detail-image" src="${esc(c.image_url)}" alt="Ảnh địa điểm bí ẩn"><p>${esc(c.description)}</p><hr><h3>Bình luận & dự đoán</h3><div id="comments"></div><form id="comment-form"><label>Bình luận hoặc đoán địa điểm<textarea name="content" maxlength="1000" placeholder="Ví dụ: Mình nghĩ đây là Chợ Bến Thành…"></textarea></label>${c.has_coordinates ? `<details class="gps-details"><summary>Hoặc dự đoán bằng vị trí máy</summary>${locationMarkup(true)}</details>` : ''}<button class="primary" type="submit">Gửi bình luận / dự đoán ↗</button><p id="comment-result" class="muted" role="status"></p></form>`;
     if (c.has_coordinates) bindLocation($('#comment-form'));
     bindLikes($('#detail'));bindShares($('#detail'));
     if (!$('#detail-dialog').open) $('#detail-dialog').showModal();
@@ -354,7 +377,6 @@ async function openCase(id, discussion = false) {
       const usedGPS = body.latitude !== undefined, result = await api(`/cases/${id}/comments`,{method:'POST',body});
       form.reset();
       let message = result.status === 'correct' ? `Đoán đúng! Bạn nhận +${result.reward_xp} XP. Bạn đã mở khóa các bình luận chứa đáp án.` : result.status === 'already_solved' ? 'Bạn đã giải được bài này và xem được các bình luận chứa đáp án.' : result.status === 'author' ? 'Bạn là người đăng bài, không nhận XP. Nội dung đáp án đã được che.' : usedGPS ? 'Vị trí chưa trúng. Dự đoán của bạn vẫn được giữ riêng tư.' : result.is_hidden ? 'Nội dung chứa đáp án đã được che để tránh tiết lộ.' : 'Đã đăng bình luận.';
-      if(result.interaction_xp)message+=' +1 XP cho bình luận đầu tiên trong bài.';
       $('#comment-result').textContent = message; toast(message);
       await loadComments(id); await refreshUser(); loadFeed(); loadHunters();
     }); };

@@ -192,3 +192,11 @@ header.sidebar{background:linear-gradient(180deg,#fff,#f4fbfd);border-right-colo
 #profile-daily{background:#f3fbfc;border:1px solid #dcebf0;border-radius:14px;padding:18px;margin-bottom:24px}
 #profile-daily .daily-journey{margin:0;padding:0;border:0}
 #profile-daily .daily-checkin{width:auto;min-width:200px}
+
+#level-celebration{position:fixed;inset:auto 20px 24px auto;display:flex;align-items:center;gap:14px;box-sizing:border-box;width:min(400px,calc(100vw - 32px));margin:0;padding:20px;border:1px solid #e2c66d;border-radius:18px;background:linear-gradient(120deg,#fff9e4,#effcfa);color:#174f5a;box-shadow:0 12px 40px #16495225;z-index:10000}
+#level-celebration[hidden]{display:none}
+#level-celebration strong{font-size:18px;color:#806115}
+#level-celebration p{margin:6px 0 0;font-size:14px;line-height:1.6}
+.level-medal{font-size:36px;color:#d59c20;flex-shrink:0}
+#level-celebration-close{align-self:flex-start;flex-shrink:0;border:0;background:transparent;color:#607786;font-size:24px;width:36px;min-height:36px;padding:0;margin-left:auto}
+@media(max-width:520px){#level-celebration{right:16px;bottom:calc(86px + env(safe-area-inset-bottom))}}
