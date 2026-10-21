@@ -27,6 +27,8 @@ services:
       LEGAL_HOSTING_LOCATION: ${LEGAL_HOSTING_LOCATION:-}
       LEGAL_SERVICE_PROVIDERS: ${LEGAL_SERVICE_PROVIDERS:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
@@ -40,7 +42,7 @@ services:
       STAFF_COOKIE_SECURE: ${STAFF_COOKIE_SECURE:-1}
       IMAGE_SCANNER: ${IMAGE_SCANNER:-nudenet}
     ports:
-      - "8000:8000"
+      - "${API_BIND_ADDRESS:-0.0.0.0}:8000:8000"
     volumes:
       - uploads:/data/uploads
     depends_on:

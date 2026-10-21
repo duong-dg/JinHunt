@@ -59,3 +59,21 @@ Phiên cũ được ghi nhận ở lần sử dụng sau nâng cấp, thời đi
 ### Mở khóa giao diện theo cấp
 
 Mặc định mọi tài khoản và khách chỉ dùng Biển xanh với phông mặc định, có thể bật/tắt tối. Từ Level 20, API tài khoản trả can_customize_appearance=true và mở các màu Hồng/Chibi cùng lựa chọn phông. Đây là tùy chỉnh hiển thị cục bộ, không phải cơ chế bảo vệ dữ liệu hay phần thưởng XP. Theme/font đã lưu không được áp dụng trước khi xác nhận cấp từ server; đăng xuất hoặc dùng tài khoản chưa đủ cấp sẽ trở về giao diện mặc định, vẫn giữ lựa chọn sáng/tối. Mốc mở khóa trả về ở appearance_unlock_level.
+
+
+### IP public sau reverse proxy
+
+Compose truyền `FORWARDED_ALLOW_IPS` cho Uvicorn để chỉ tin header từ proxy đã cấu hình. Trong `.env`, đặt IP nguồn của proxy mà container API thực sự nhìn thấy (có thể là gateway Docker); không đặt IP của người chơi và không dùng `*`. Có thể khai báo nhiều IP, phân cách dấu phẩy. Không tự mặc định tin toàn bộ mạng Docker.
+
+Nếu Nginx chạy trực tiếp trên cùng Ubuntu và nhận kết nối từ người dùng, dùng `API_BIND_ADDRESS=127.0.0.1` để cổng 8000 chỉ phục vụ nội bộ. Trong location chuyển tiếp API:
+
+```nginx
+proxy_pass http://127.0.0.1:8000;
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+Nginx ghi đè X-Forwarded-For bằng địa chỉ kết nối thực, tránh nhận IP giả do khách tự gửi. Nếu có Cloudflare/CDN hoặc nhiều lớp proxy, cần cấu hình real_ip và danh sách IP tin cậy tương ứng trước; không áp dụng mẫu một lớp để suy ra IP người chơi qua CDN.
+
+Sau khi cấu hình, chạy `sudo docker compose up -d --build`, đăng xuất rồi đăng nhập lại và kiểm tra Quản lý thiết bị. Bản ghi lịch sử đã lưu IP gateway giữ nguyên vì không thể khôi phục IP public cũ. IP public có thể dùng chung giữa nhiều thiết bị và không xác định chắc chắn địa chỉ nhà hay thành phố.
