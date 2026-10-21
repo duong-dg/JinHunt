@@ -293,3 +293,24 @@ def test_device_ip_uses_asgi_address_not_forwarded_header():
     assert client_ip(request)=='8.8.8.8'
     assert client_ip(SimpleNamespace(client=SimpleNamespace(host='not-an-ip'))) is None
     assert device_name('Mozilla/5.0 (Windows NT 10.0) Edg/120')=='Edge · Windows'
+
+
+def test_xp_is_private_but_leaderboard_still_sorts_by_it(client):
+    first=account(client,'privatepointsfirst');second=account(client,'privatepointssecond')
+    first_id=client.get('/api/me',headers=first).json()['id']
+    second_id=client.get('/api/me',headers=second).json()['id']
+    with next(app.dependency_overrides[get_db]()) as db:
+        db.get(User,first_id).total_xp=1234;db.get(User,second_id).total_xp=5678;db.commit()
+    hidden={'xp','xp_in_level','xp_for_next_level','xp_to_next_level','total_xp'}
+    board=client.get('/api/leaderboard').json()
+    assert [p['id'] for p in board]==[second_id,first_id]
+    assert all(not hidden.intersection(p) for p in board)
+    assert all('level' in p and 'avatar_frame' in p for p in board)
+    assert not hidden.intersection(client.get(f'/api/users/{first_id}',headers=second).json())
+    client.put(f'/api/users/{first_id}/follow',headers=second)
+    follower=client.get(f'/api/users/{first_id}/followers').json()[0]
+    assert not hidden.intersection(follower)
+    actor=client.get('/api/notifications',headers=first).json()['items'][0]['actor']
+    assert not hidden.intersection(actor)
+    private=client.get('/api/me',headers=first).json()
+    assert private['xp']==1234 and 'xp_in_level' in private and 'xp_to_next_level' in private

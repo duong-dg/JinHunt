@@ -464,3 +464,50 @@ html[data-font=serif] :is(input,textarea,select){line-height:1.6}
   html:is([data-palette=rose],[data-palette=chibi])[data-theme=light] .sidebar nav button.active{border-top-color:var(--theme-accent);box-shadow:none;background:transparent;color:var(--theme-accent)}
   html:is([data-palette=rose],[data-palette=chibi])[data-theme=dark] .sidebar nav button.active{border-top-color:var(--theme-dark-ink);box-shadow:none;background:transparent;color:var(--theme-dark-ink)}
 }
+
+/* Filled desktop creation button must not inherit menu-link accent colors. */
+@media(min-width:521px){
+  html[data-palette][data-theme] header.sidebar nav button#create{color:#fff}
+  html[data-palette][data-theme] header.sidebar nav button#create>span{color:inherit;-webkit-text-fill-color:currentColor}
+}
+
+@media(max-width:520px){
+  html[data-palette][data-theme] header.sidebar nav button#create{background:transparent;box-shadow:none}
+  html[data-palette][data-theme=light] header.sidebar nav button#create{color:var(--theme-accent,#087d94)}
+  html[data-palette][data-theme=dark] header.sidebar nav button#create{color:var(--theme-dark-ink,#9de8ed)}
+}
+
+/* Counts on the left; solved count and sharing tools on the right. */
+.post-actions{display:flex;align-items:center;flex-wrap:nowrap;gap:8px}
+.post-actions .guess-button{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;gap:7px;min-height:44px;padding:7px 10px;border:1px solid #d4e5eb;border-radius:10px;background:#f0f7fa;color:#487785!important;box-shadow:none;font-size:14px}
+.post-actions .guess-button svg{width:20px;height:20px}
+.post-actions .guess-button:hover{background:#e2f0f5;filter:none}
+.post-actions-right{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-left:auto;min-width:0}
+.post-actions .post-actions-right .solved-count{flex:0 1 auto;flex-basis:auto;width:auto;max-width:none;min-width:0;margin:0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+html[data-theme=dark] .post-actions .guess-button{background:#203846;color:#bddde8!important;border-color:#3c5967}
+@media(max-width:520px){
+  .post-actions{gap:6px}
+  .post-actions .like-button{padding:6px!important;min-height:44px;flex-shrink:0}
+  .post-actions .guess-button{padding:6px;gap:5px;font-size:13px;flex:0 0 auto}
+  .post-actions-right{gap:4px;flex:0 1 auto}
+  .post-actions .post-actions-right .solved-count{font-size:11px!important}
+  .post-actions-right :is(.share-button,.bookmark-button){padding:6px;min-width:34px;min-height:44px;flex-shrink:0;background:transparent}
+  .post-actions-right :is(.share-button,.bookmark-button)>span{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+}
+
+.podium-rank{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:42px;min-width:42px;color:#6e8d9c;font-size:14px}
+.podium-rank svg{width:30px;height:30px;filter:drop-shadow(0 2px 2px #6c49131a)}
+.podium-rank b{font-size:13px;line-height:1.2;letter-spacing:1px}
+.leader.podium-place-1{border:1px solid #e3bd62;background:linear-gradient(115deg,#fff5d6,#fffdf7 65%,#f9e9b7);box-shadow:0 5px 18px #c2942920;border-radius:16px;min-height:98px}
+.leader.podium-place-2{border:1px solid #bcccd8;background:linear-gradient(115deg,#edf3f8,#fff 65%,#e4edf5);border-radius:14px;min-height:88px}
+.leader.podium-place-3{border:1px solid #d9b390;background:linear-gradient(115deg,#faede1,#fffcf8 65%,#f4e0ce);border-radius:14px;min-height:84px}
+.podium-place-1 .podium-rank{color:#a87916!important}.podium-place-2 .podium-rank{color:#6b8296!important}.podium-place-3 .podium-rank{color:#aa6a39!important}
+.leader.podium-place-1 .podium-rank svg{width:36px;height:36px}
+.hunter .podium-rank{width:25px;min-width:25px;gap:0}.hunter .podium-rank svg{width:23px;height:23px}.hunter .podium-rank b{font-size:10px}
+.hunter:is(.podium-place-1,.podium-place-2,.podium-place-3){padding:10px 8px;border-radius:12px;border:1px solid #dce8ed}
+.hunter.podium-place-1{background:#fff5da;border-color:#e8cb84}.hunter.podium-place-2{background:#edf3f8;border-color:#ccd9e3}.hunter.podium-place-3{background:#f9eee4;border-color:#e3c9b0}
+html[data-theme=dark] #feed .leader.podium-place-1,html[data-theme=dark] #top-hunters .hunter.podium-place-1{background:linear-gradient(115deg,#3b3322,#292e31);border-color:#8b7138}
+html[data-theme=dark] #feed .leader.podium-place-2,html[data-theme=dark] #top-hunters .hunter.podium-place-2{background:linear-gradient(115deg,#2e3d49,#202e38);border-color:#617989}
+html[data-theme=dark] #feed .leader.podium-place-3,html[data-theme=dark] #top-hunters .hunter.podium-place-3{background:linear-gradient(115deg,#3c302a,#292e33);border-color:#896346}
+html[data-theme=dark] .podium-place-1 .podium-rank{color:#f1cd72!important}html[data-theme=dark] .podium-place-2 .podium-rank{color:#c3d3e0!important}html[data-theme=dark] .podium-place-3 .podium-rank{color:#e6b18a!important}
+@media(max-width:520px){.leader:is(.podium-place-1,.podium-place-2,.podium-place-3){margin:0 12px;padding:16px 12px}.leader .podium-rank{min-width:32px;width:32px}.leader .score{font-size:11px}.leader.podium-place-1 .podium-rank svg{width:30px;height:30px}}

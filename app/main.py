@@ -70,10 +70,10 @@ def normalize(value):
 def public_user(user):
     return {"id": user.id, "username": user.username, "display_name": user.display_name or user.username,
             "bio": user.bio or "", "avatar_url": user.avatar_url,
-            "xp": user.total_xp, **progression(user.total_xp)}
+            "level":progression(user.total_xp)["level"],"avatar_frame":progression(user.total_xp)["avatar_frame"],"rank_name":progression(user.total_xp)["rank_name"]}
 
 def private_user(user, db=None):
-    return {**public_user(user), "can_customize_appearance":progression(user.total_xp)["level"]>=20,"appearance_unlock_level":20, "email": user.email, "phone": user.phone,
+    return {**public_user(user),"xp":user.total_xp,**progression(user.total_xp), "can_customize_appearance":progression(user.total_xp)["level"]>=20,"appearance_unlock_level":20, "email": user.email, "phone": user.phone,
             "contact_verified":bool(user.email and user.email_verified), "email_verified":bool(user.email and user.email_verified), "phone_verified":False, "guardian_managed":bool(user.guardian_managed),
             "needs_legal_consent":bool(db is not None and (not user.player_birth_date or not latest_consent(db,user))),
             "role":user.role, "player_birth_date":user.player_birth_date.isoformat() if user.player_birth_date else None, "legal_version":LEGAL_VERSION}
